@@ -151,6 +151,7 @@ import type {
   VaultResponse,
   VaultUpdateRequest,
   InstalledPluginsResponse,
+  SandboxSettingsResponse,
   VersionResponse,
   WorkspaceFilesResponse,
   WorkspaceSearchResponse,
@@ -1345,7 +1346,7 @@ export const desktopUpdateDownload = () =>
 export const desktopUpdateInstall = () =>
   apiFetch<void>("/api/desktop/update/install", { method: "POST", body: {} });
 
-// ---- The plugins a Project asks for ----
+// ---- The plugins a Project asks for, and the confinement agent commands run under ----
 /**
  * A Project's plugin list. Project-scoped because machines are lent to Projects, so this is
  * what says which machines a plugin has to reach; what the process RUNS is the union over
@@ -1377,3 +1378,10 @@ export const uninstallPlugin = (projectId: string, specifier: string) =>
     `${pluginsPath(projectId)}?specifier=${encodeURIComponent(specifier)}`,
     { method: "DELETE" },
   );
+export const adminGetSandbox = () => apiFetch<SandboxSettingsResponse>("/api/admin/sandbox");
+/** Applies to the next command spawn; no restart. */
+export const adminPutSandbox = (body: {
+  mode: string;
+  network: "none" | null;
+  maskPaths: string[];
+}) => apiFetch<SandboxSettingsResponse>("/api/admin/sandbox", { method: "PUT", body });
