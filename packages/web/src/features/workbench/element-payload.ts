@@ -82,11 +82,37 @@ export interface PayloadStyle {
 
 export interface ElementPayload {
   kind: typeof PAYLOAD_KIND;
-  schemaVersion: number;
+  /** Exactly v1: the shape is frozen, and a reader narrows on this before it believes the rest. */
+  schemaVersion: typeof PAYLOAD_SCHEMA_VERSION;
   page: PayloadPage;
   target: PayloadTarget;
   source: PayloadSource;
   style: PayloadStyle;
+  note: string;
+}
+
+/** v2. Several elements of one page in one message (L2.1-b) — the shape §6 rule 4 reserved. */
+export const PAYLOAD_SCHEMA_VERSION_BATCH = 2;
+
+/** One element as a batch holds it: what v1 has at the top level, minus the page they share. */
+export interface PayloadElement {
+  target: PayloadTarget;
+  source: PayloadSource;
+  style: PayloadStyle;
+}
+
+/**
+ * A batch of picked elements: one `page` for all of them, because a pick can only come from the
+ * document on screen and a navigation drops every pick with it (`reducePick`, `installed`).
+ *
+ * `elements` is **ordered by file** rather than by pick order (`orderByFile`), so the file a group of
+ * edits lands in is visible in the JSON itself and not only in the prose above it (L2.1-c).
+ */
+export interface ElementPayloadBatch {
+  kind: typeof PAYLOAD_KIND;
+  schemaVersion: typeof PAYLOAD_SCHEMA_VERSION_BATCH;
+  page: PayloadPage;
+  elements: PayloadElement[];
   note: string;
 }
 
@@ -193,6 +219,30 @@ export interface PayloadInput {
  * the shape the panel sends.
  */
 export function buildPayload(input: PayloadInput): ElementPayload {
+  return {
+    kind: PAYLOAD_KIND,
+    schemaVersion: PAYLOAD_SCHEMA_VERSION,
+    page: pageOf(input),
+    ...elementOf(input),
+    note: SELECTOR_NOTE,
+  };
+}
+
+/** The page half: the same for every element of a message, which is why v2 states it once. */
+function pageOf(input: PayloadInput): PayloadPage {
+  return {
+    url: input.page.url,
+    projectRoot: input.projectRoot,
+    projectName: projectNameOf(input.projectRoot),
+    viewport: { ...input.page.viewport },
+  };
+}
+
+/**
+ * One element's half of the payload. The `refId` is issued here, from the source site as it is known
+ * right now, so an element that moved has a new id in the very same call that moved it.
+ */
+function elementOf(input: PayloadInput): PayloadElement {
   const { target, page, projectRoot } = input;
   const source = input.source ?? { confidence: "none" as Confidence };
   const refId = issueRefId(
@@ -206,14 +256,6 @@ export function buildPayload(input: PayloadInput): ElementPayload {
     target,
   );
   return {
-    kind: PAYLOAD_KIND,
-    schemaVersion: PAYLOAD_SCHEMA_VERSION,
-    page: {
-      url: page.url,
-      projectRoot,
-      projectName: projectNameOf(projectRoot),
-      viewport: { ...page.viewport },
-    },
     target: {
       refId,
       cssSelector: target.cssSelector,
@@ -233,8 +275,75 @@ export function buildPayload(input: PayloadInput): ElementPayload {
     },
     source,
     style: { classes: [...target.classList], computed: { ...target.computed } },
+  };
+}
+
+/** One file's elements, in the order they were picked — a file group of the message (L2.1-c). */
+export interface ElementGroup<T> {
+  /** The project-relative file, or `null` for elements nothing could locate (§6 rule 2's `none`). */
+  file: string | null;
+  members: T[];
+}
+
+/**
+ * Group elements by the file they were written in, one file at a time.
+ *
+ * The **same function** decides the order of the payload's `elements` array (`orderByFile`) and the
+ * groups the message's prose names, so the JSON and the sentence above it can never disagree about
+ * which edits belong together. Groups appear in the order their first element was picked, and the
+ * elements nothing could locate form one group of their own — an honest "no location yet" rather than
+ * a file invented to have somewhere to put them.
+ */
+export function groupByFile<T extends { source?: PayloadSource }>(
+  entries: readonly T[],
+): ElementGroup<T>[] {
+  const groups: ElementGroup<T>[] = [];
+  for (const entry of entries) {
+    const file = entry.source?.file ?? null;
+    const group = groups.find((candidate) => candidate.file === file);
+    if (group === undefined) groups.push({ file, members: [entry] });
+    else group.members.push(entry);
+  }
+  return groups;
+}
+
+/** The same grouping, flattened: the order a batch payload's `elements` array is written in. */
+export function orderByFile<T extends { source?: PayloadSource }>(entries: readonly T[]): T[] {
+  return groupByFile(entries).flatMap((group) => group.members);
+}
+
+/**
+ * Assemble the batch. One element is v1 and stays v1 (`buildPayload`) — the panel decides by count,
+ * so an Agent that has only ever seen one element never meets a new shape, and an Agent that meets
+ * this one knows it is looking at several because `schemaVersion` says so (L2.1-b).
+ */
+export function buildBatchPayload(inputs: readonly PayloadInput[]): ElementPayloadBatch {
+  const first = inputs[0];
+  if (first === undefined) {
+    // Not a case the panel can reach — a batch is only built from picks, and picks are elements —
+    // but a payload with no page would be a payload every reader has to guess at.
+    throw new Error("buildBatchPayload needs at least one element");
+  }
+  return {
+    kind: PAYLOAD_KIND,
+    schemaVersion: PAYLOAD_SCHEMA_VERSION_BATCH,
+    page: pageOf(first),
+    elements: orderByFile(inputs).map((input) => elementOf(input)),
     note: SELECTOR_NOTE,
   };
+}
+
+/**
+ * The id of a batch's chip: one message, one chip, and staging the same set twice is an update rather
+ * than a second copy (`stageReference` keys on this).
+ *
+ * Sorted, so the same elements picked in another order are the same batch — re-picking is not a second
+ * message. It is deliberately *not* a hash of the members' positions: a batch is not an element, and
+ * its id must never be mistaken for one. The member `refId`s inside the payload are what the Agent
+ * edits by.
+ */
+export function batchRefId(refIds: readonly string[]): string {
+  return `elb-${fnv1a64Hex([...refIds].sort().join("\u0000"))}`;
 }
 
 /**
@@ -260,6 +369,9 @@ export function elementLabel(target: ElementFacts): string {
  * person too. The block is fenced and machine-parseable on its own, which is the whole point of a
  * payload: an Agent reads the JSON, the sentence is for whoever is looking at the conversation.
  */
-export function elementReferenceText(lead: string, payload: ElementPayload): string {
+export function elementReferenceText(
+  lead: string,
+  payload: ElementPayload | ElementPayloadBatch,
+): string {
   return `${lead}\n\n\`\`\`json\n${JSON.stringify(payload, null, 2)}\n\`\`\``;
 }

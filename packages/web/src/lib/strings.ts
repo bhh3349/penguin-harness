@@ -2637,14 +2637,29 @@ Benchmark：
     pickStop: "关闭选择",
     pickPause: "暂离",
     pickResume: "恢复选择",
+    /**
+     * Multi-select (L2.1-a): a state inside pick mode, entered on purpose. The copy says what a click
+     * does *in this state* — accumulate — because that is the one thing a user has to know before the
+     * first click, and it says how to take one back, because a batch is something you build and trim.
+     */
+    multiStart: "多选元素",
+    multiStop: "退出多选",
+    multiCount: (count: number) => `已选中 ${count} 个`,
+    multiRemove: (name: string) => `取消选中 ${name}`,
+    /** The chip a whole batch wears in the composer: one chip, one message (L2.1-b). */
+    batchChip: (count: number, files: number) => `${count} 个元素 / ${files} 个文件`,
     candidate: "候选",
     picked: "已选中",
     pickHint:
       "悬停高亮、点击选中（那一次点击不会落到页面上）；Esc 先取消选中，再按一次退出选择模式。够不着的元素先点「暂离」把页面操作出来，再「恢复选择」。",
+    multiHint:
+      "多选已开：连续点击把元素加进这一批，再点同一个元素就是从这一批里取消它；「加入对话」把这一批放进同一条消息（同一个文件里改几处、跨文件一起改都行）。",
     pausedHint:
       "暂离中：页面完全归你操作——下拉、模态、悬停浮层都可以点开，点「恢复选择」接着选（L1 不会替你展开）。",
     pickOffHint: "选择模式已关：页面交互完全正常。",
     pickedNext: "载荷已组装好（见上方）；「加入对话」把它放进输入框。",
+    pickedNextBatch: (count: number) =>
+      `这一批（${count} 个元素）已组装好（见上方）；「加入对话」把它们放进同一条消息。`,
     addToChat: "加入对话",
     /** One element a send-time re-resolution could not find (AC-8), and which way it went. */
     goneElement: (label: string, reason: "missing" | "replaced" | "page-changed") =>
@@ -2654,8 +2669,17 @@ Benchmark：
           ? `已不是原来那个元素：${label}（这个位置上换成了别的元素）`
           : `页面已切换：${label} 是在另一个页面上选的`,
     goneElementDetail: "这一条不会发出去——重新选一个，或者把 chip 从输入框里删掉。",
+    /**
+     * The other half of L2.1-d: a batch whose *some* elements went away is still sent, so the sentence
+     * cannot be the held one above — it has to say what happened to the missing ones and how to get
+     * them back (re-pick, which is one click in a page the user still has open).
+     */
+    goneElementDetailPartial:
+      "消失的那几条已经从这条消息里剔除了，其余照发；要把它们重新带上，回预览里再点一次。",
     /** The chip itself, when its element is not in the page any more. */
     goneChip: "已消失",
+    /** A batch chip that went out with fewer elements than it was staged with (L2.1-d). */
+    droppedChip: (count: number) => `少 ${count} 个`,
     /** The composer is held rather than send a chip the page has already contradicted. */
     sendHeld: (detail: string) => `没有发送：${detail}`,
     /** The line above the payload in the message: what was picked, and on which page. */
@@ -2691,6 +2715,8 @@ Benchmark：
       `这个页面里有 ${count} 个 iframe：L1 不进入 frame 内部，那里面的元素选不到。`,
     payload: {
       title: "载荷（§6 v1）",
+      batchTitle: (count: number, files: number) =>
+        `载荷（§6 v2 · ${count} 个元素 / ${files} 个文件）`,
       refId: "refId",
       selector: "选择器",
       tag: "标签",
@@ -2701,11 +2727,26 @@ Benchmark：
       rect: "矩形",
       parentChain: "父链",
       classes: "类名",
+      elements: "元素",
       project: "项目",
       page: "页面",
       source: "源码位置",
       json: "载荷 JSON（v1）",
+      jsonBatch: "载荷 JSON（v2）",
     },
+    /**
+     * The line above a batch in the message (L2.1-c). One message, one `page`, and the elements named
+     * **by file** — the same grouping the payload's `elements` array is ordered by, so the sentence and
+     * the JSON say the same thing about which edits belong together. The count of files is in the lead
+     * because that is what tells the reader the shape of the job before they read a single line of it.
+     */
+    batchLead: (count: number, files: number) =>
+      `选中的 UI 元素（${count} 个，来自 ${files} 个文件，同文件的排在一起）：`,
+    batchLine: (file: string, items: string) => `· ${file} —— ${items}`,
+    batchItem: (label: string, line: number | null) =>
+      line === null ? label : `${label}（第 ${line} 行）`,
+    /** The honest group name for elements nothing could locate — never a made-up file. */
+    batchNoFile: "还没有源码位置",
     /**
      * The `source` row, said as the tier it landed in (FR-07's four levels), with the reason spelled
      * out when there is no location. These are the words a user reads to decide whether to keep

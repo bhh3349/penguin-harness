@@ -119,3 +119,24 @@ export async function refreshElementReferences(
   }
   return { references: next, gone, refreshed, unchecked };
 }
+
+/**
+ * What a **batch** chip's re-resolution amounts to: hold the message, or send it with the elements
+ * that survived (L2.1-d).
+ *
+ * The single-element rule this generalizes is L1's: the page no longer has the element, so the message
+ * is held. For several elements that rule would make one vanished card hold back three edits, so the
+ * batch splits the difference — one gone element is dropped from the message and named in the panel,
+ * and only a batch where **every** element is gone is held. A batch of nothing is not worth sending:
+ * the message would carry the user's words and no element at all.
+ *
+ * `unknown` counts as surviving, deliberately, exactly as it does in L1: it means the page could not
+ * be asked (no preview, a guest that went away), not that the element is gone. Dropping an element we
+ * merely failed to check would be this module inventing an answer.
+ */
+export function batchDecision(
+  results: readonly { kind: ElementRefresh["kind"] }[],
+): "hold" | "send" {
+  if (results.length === 0) return "send";
+  return results.every((result) => result.kind === "gone") ? "hold" : "send";
+}

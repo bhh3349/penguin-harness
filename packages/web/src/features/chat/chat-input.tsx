@@ -2668,14 +2668,24 @@ export function ChatInput({
             {references.map((reference, i) => {
               const { name, lines } = referenceParts(reference);
               const title = referenceTitle(reference);
+              // Two ways a chip is not everything it was staged as (M4.1 / L2.1-d): the element is
+              // gone and the send is held, or a *batch* went out without part of itself. Both are the
+              // user's business and both are shown here, where the chip is; the words differ because
+              // what happened differs.
+              const marker =
+                reference.stale === true
+                  ? S.workbench.goneChip
+                  : reference.dropped === undefined
+                    ? null
+                    : S.workbench.droppedChip(reference.dropped);
               return (
                 <span
                   key={i}
                   title={title}
                   className={`anim-pop flex max-w-48 items-center gap-1 rounded-md py-0.5 pl-2 pr-1 font-mono text-xs ${
-                    reference.stale === true
-                      ? "bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300"
-                      : "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200"
+                    marker === null
+                      ? "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200"
+                      : "bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300"
                   }`}
                 >
                   <GlyphIcon
@@ -2689,10 +2699,9 @@ export function ChatInput({
                   <span className="min-w-0 truncate">{name}</span>
                   {lines !== "" && <span className="shrink-0">{lines}</span>}
                   {/* An element chip the page no longer has says so on the chip itself: the send is
-                      held on it (M4.1 / AC-8), and this is where the user sees which one. */}
-                  {reference.stale === true && (
-                    <span className="shrink-0">{S.workbench.goneChip}</span>
-                  )}
+                      held on it (M4.1 / AC-8), and this is where the user sees which one. A batch
+                      chip that was sent with fewer elements says how many (L2.1-d). */}
+                  {marker !== null && <span className="shrink-0">{marker}</span>}
                   <button
                     type="button"
                     aria-label={`${S.files.removeReference} ${title}`}

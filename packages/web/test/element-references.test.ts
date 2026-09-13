@@ -10,6 +10,7 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  batchDecision,
   refreshElementReference,
   refreshElementReferences,
   registerElementSource,
@@ -177,5 +178,34 @@ describe("refreshElementReferences", () => {
       refreshed: 0,
       unchecked: 0,
     });
+  });
+});
+
+/**
+ * L2.1-d: what a batch's re-resolution amounts to. The single-element rule ("the page no longer has
+ * it, so the message is held") would make one vanished element hold back three edits, so the batch
+ * drops what went and sends the rest — and holds only when there is nothing left to edit. `unknown`
+ * counts as surviving, exactly as it does in the single-element path: the page could not be asked,
+ * which is not the answer "the page does not have it".
+ */
+describe("batchDecision", () => {
+  const gone = { kind: "gone" } as const;
+  const fresh = { kind: "refreshed" } as const;
+  const blind = { kind: "unknown" } as const;
+
+  it("sends when something survived — one vanished element does not hold the batch", () => {
+    expect(batchDecision([fresh, gone, fresh])).toBe("send");
+    expect(batchDecision([gone, blind, fresh])).toBe("send");
+  });
+
+  it("holds only when every element of the batch is gone", () => {
+    expect(batchDecision([gone, gone, gone])).toBe("hold");
+    // One survivor is enough — including one that could not be checked at all.
+    expect(batchDecision([gone, blind])).toBe("send");
+    expect(batchDecision([gone, fresh])).toBe("send");
+  });
+
+  it("holds nothing about an empty batch: there is no chip to send and nothing to hold", () => {
+    expect(batchDecision([])).toBe("send");
   });
 });

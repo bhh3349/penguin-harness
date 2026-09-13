@@ -28,6 +28,13 @@
  * and when it cannot be, the card says which of the four tiers it landed in and why
  * (`source-tier.ts`) instead of only saying that it has nothing — a page with no readable source map
  * is a documented limit of this feature (PRD FR-07), not a bug in it.
+ *
+ * Several elements can be picked in one go (L2.1): multi-select is a *state inside pick mode* that
+ * accumulates clicks and can drop them one by one, the card then shows one file group per row, and
+ * `加入对话` stages **one** chip carrying a v2 payload — one `page`, one `elements` array, ordered by
+ * file — so a batch is one message rather than three. One element is still v1, unchanged: the shape
+ * follows the count, so the message an Agent already knows how to read is not re-shaped for the user
+ * who picked a single element.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { S } from "../../lib/strings";
@@ -50,21 +57,37 @@ import {
   parsePickerMessage,
   pickerCommand,
   pickerFrameCount,
+  pickerMulti,
   pickerResolve,
   pickerScript,
+  pickerSetPicked,
 } from "./element-picker";
-import type { ElementFacts } from "./element-picker";
+import type { ElementFacts, PageFacts } from "./element-picker";
 import { boundsNotes } from "./element-bounds";
 import type { BoundsNote } from "./element-bounds";
-import { buildPayload, elementLabel, elementReferenceText } from "./element-payload";
-import type { ElementPayload, PayloadSource } from "./element-payload";
-import { registerElementSource } from "./element-references";
+import {
+  batchRefId,
+  buildBatchPayload,
+  buildPayload,
+  elementLabel,
+  elementReferenceText,
+  groupByFile,
+} from "./element-payload";
+import type {
+  ElementPayload,
+  ElementPayloadBatch,
+  PayloadElement,
+  PayloadInput,
+  PayloadSource,
+} from "./element-payload";
+import { batchDecision, registerElementSource } from "./element-references";
 import type { ElementGoneReason, ElementRefresh } from "./element-references";
 import { createModuleReader, resolveSource } from "./source-resolution";
 import { explainSourceGap, sourceRowText } from "./source-tier";
 import type { SourceGapReason } from "./source-tier";
 import {
   ADDRESS_KEY,
+  currentPick,
   initialAddress,
   normalizeAddress,
   pickMode,
@@ -78,7 +101,7 @@ import {
   type PickEvent,
   type PickMode,
   type PickState,
-  type ResolvedSource,
+  type ResolvedSources,
 } from "./workbench-state";
 
 function readStoredAddress(): string | null {
@@ -175,6 +198,78 @@ function payloadRows(
   return rows;
 }
 
+/**
+ * The card for a batch, by file (L2.1-c): one row per file naming the elements it holds — each with
+ * the tier its location landed in, the same sentence the single-element card shows — and then the page
+ * the whole batch came from. The grouping is the payload's own, so the card, the message's prose and
+ * the JSON all say the same thing about which edits belong together.
+ *
+ * `sourceRow` is the component's per-element source sentence rather than a second copy of that logic:
+ * a location must be described the same way whether one element is being looked at or three.
+ */
+function batchRows(
+  inputs: readonly PayloadInput[],
+  sourceRow: (input: PayloadInput) => string,
+): { label: string; value: string }[] {
+  const t = S.workbench.payload;
+  const first = inputs[0];
+  if (first === undefined) return [];
+  const groups = groupByFile(inputs).map((group) => ({
+    label: group.file ?? S.workbench.batchNoFile,
+    value: group.members
+      .map((member) => `${elementLabel(member.target)} · ${sourceRow(member)}`)
+      .join("；"),
+  }));
+  return [
+    ...groups,
+    { label: t.project, value: first.projectRoot },
+    {
+      label: t.page,
+      value: `${first.page.url} · ${first.page.viewport.width}×${first.page.viewport.height}@${first.page.viewport.dpr}x`,
+    },
+  ];
+}
+
+/** One element a chip was staged with: what to re-read it by, and what to call it if it is gone. */
+interface StagedElement {
+  /** The element's own half of the payload, as it was staged — `refId`, path, source site, style. */
+  payload: PayloadElement;
+  /** The page it was picked on: a chip is about one document, and another one invalidates it (AC-11c). */
+  page: PageFacts;
+  /** The facts behind the payload, so a member that cannot be re-read keeps its snapshot unchanged. */
+  target: ElementFacts;
+  label: string;
+}
+
+/**
+ * What one chip holds (M4.1): the payload(s) to re-resolve at send time.
+ *
+ * A single pick and a batch are kept apart rather than folded into "a list of one", because the *shape
+ * of the message* depends on which it is — one element is a v1 payload, several are a v2 batch
+ * (L2.1-b) — and the chip should not have to count its way to that answer.
+ */
+type StagedEntry =
+  { kind: "single"; element: StagedElement } | { kind: "batch"; elements: StagedElement[] };
+
+/**
+ * What one re-read of a staged element came back with (the page half of a chip, M4.1).
+ *
+ * `built` is the v1 payload as of now — what a single-element chip's message is composed from — and it
+ * travels beside `element` rather than inside it because a batch member is not a v1 payload (L2.1-b):
+ * the shared pieces are `element`'s, and the whole-payload shape belongs to whoever is composing.
+ */
+type StagedRead =
+  | { kind: "refreshed"; element: StagedElement; built: ElementPayload; moved: boolean }
+  | { kind: "gone"; reason: ElementGoneReason }
+  | { kind: "unknown" };
+
+/** Elements a send-time re-resolution lost, and which way the send went (L2.1-d). */
+interface GoneReport {
+  entries: { label: string; reason: ElementGoneReason }[];
+  /** True when the message was **held** — every element of the chip had gone. */
+  held: boolean;
+}
+
 export function WorkbenchPanel({
   workspace,
   onAddReference,
@@ -214,7 +309,7 @@ export function WorkbenchPanel({
    * showed the new element beside the previous element's file and line — which the probe caught both
    * in the DOM and in a `rAF`, so it was drawn, not merely held (see `sourceFor`).
    */
-  const [resolvedSource, setResolvedSource] = useState<ResolvedSource<PayloadSource> | null>(null);
+  const [resolvedSources, setResolvedSources] = useState<ResolvedSources<PayloadSource>>(new Map());
   /** The module URLs the page loaded — the fallback when a framework names no module at all. */
   const moduleUrlsRef = useRef<string[]>([]);
   /**
@@ -222,14 +317,13 @@ export function WorkbenchPanel({
    * wears. This is the other half a send-time re-resolution needs — the path and the anchor to look
    * the element up by — and the name to report it under when it is not found (M4.1).
    */
-  const stagedPayloads = useRef<Map<string, { payload: ElementPayload; label: string }>>(new Map());
+  const stagedPayloads = useRef<Map<string, StagedEntry>>(new Map());
   /**
    * Elements a send-time re-resolution could not find. The panel is where that gets said out loud —
-   * the composer marks the chip and holds the message, and this is the line that explains why.
+   * the composer marks the chip and holds the message, and this is the line that explains why. For a
+   * batch it also says which way the send went (L2.1-d): dropped, or held.
    */
-  const [goneElements, setGoneElements] = useState<{ label: string; reason: ElementGoneReason }[]>(
-    [],
-  );
+  const [goneReport, setGoneReport] = useState<GoneReport>({ entries: [], held: false });
   /**
    * Frames the loaded page embeds (M4.4, PRD §9.4). Nothing inside one can be picked, and the panel
    * only knows to say so because the page counted them; `null` while nobody has asked.
@@ -255,37 +349,54 @@ export function WorkbenchPanel({
   }, []);
 
   /**
-   * Which selection the source state is being asked about, and the source that is true of it.
-   *
-   * The pair is what keeps a card from ever naming the wrong file: a resolution that answers an
-   * earlier pick is simply not this selection's, so the row reads as `pending` until the one that is
-   * arrives. Nothing here depends on the pick and the resolution landing in the same render, which is
-   * the property the untagged version did not have (M5.1, `实测脚本/m54-卡片归属/`).
+   * The element the card is about — the last one picked — and everything L1 read out of "the
+   * selection" still reads it: the source row, the payload rows, the §9.4 bounds, the line in the
+   * picker row. A batch is shown as a batch beside it (a count and a list), not instead of it.
    */
+  const selected = currentPick(pick);
   const sourceIdentity =
-    pick.selected === null || pick.page === null
+    selected === null || pick.page === null
       ? null
-      : selectionIdentity(pick.page.url, pick.selected.cssSelector);
-  const source = sourceFor(resolvedSource, sourceIdentity);
+      : selectionIdentity(pick.page.url, selected.cssSelector);
+  const source = sourceFor(resolvedSources, sourceIdentity);
 
   /**
-   * The payload for the current selection, built from the facts the page reported rather than
-   * cached: a new pick is a new payload, and `projectRoot` (the Session's workspace) can change
-   * under a panel that is deliberately not keyed by Session — switching conversations must not keep
-   * pointing the next payload at the previous project.
+   * What one element contributes to a message: its facts, the page it came from, and the source the
+   * panel has resolved for it — or nothing, which is written out as `confidence: "none"` rather than
+   * invented (the honest fourth level of §6 rule 2).
+   *
+   * Built from the picks on every render rather than cached, because `projectRoot` (the Session's
+   * workspace) can change under a panel that is deliberately not keyed by Session — switching
+   * conversations must not keep pointing the next payload at the previous project.
    */
-  const payload = useMemo(
-    () =>
-      pick.selected === null || pick.page === null
-        ? null
-        : buildPayload({
-            target: pick.selected,
-            page: pick.page,
-            projectRoot: workspace,
-            ...(source === null ? {} : { source }),
-          }),
-    [pick.selected, pick.page, workspace, source],
-  );
+  const items: PayloadInput[] = useMemo(() => {
+    if (pick.page === null) return [];
+    return pick.picked.map((target) => {
+      const resolved = sourceFor(
+        resolvedSources,
+        selectionIdentity(pick.page!.url, target.cssSelector),
+      );
+      return {
+        target,
+        page: pick.page!,
+        projectRoot: workspace,
+        ...(resolved === null ? {} : { source: resolved }),
+      };
+    });
+  }, [pick.picked, pick.page, workspace, resolvedSources]);
+
+  /**
+   * The payload for what is picked. **One element is v1 and several are v2** (L2.1-b) — the shape
+   * follows the count, not the mode, so a single pick in multi-select is the same payload L1 sends and
+   * an Agent that has only ever seen one element never meets a new shape.
+   */
+  const payload = useMemo<ElementPayload | ElementPayloadBatch | null>(() => {
+    const first = items[0];
+    if (first === undefined) return null;
+    return items.length === 1 ? buildPayload(first) : buildBatchPayload(items);
+  }, [items]);
+  const batch: ElementPayloadBatch | null =
+    payload !== null && payload.schemaVersion === 2 ? payload : null;
 
   /**
    * What the source row says, and why. `pending` is exactly "the pick is in and the resolution has
@@ -295,20 +406,37 @@ export function WorkbenchPanel({
    * address probe read off the page — rather than from a new field in the frozen payload schema
    * (D20: §6 is not widened for a panel sentence).
    */
-  const sourcePending = pick.selected !== null && source === null;
+  const sourcePending = selected !== null && source === null;
   const sourceGap = explainSourceGap({
     source: source ?? { confidence: "none" },
-    hasEvidence: pick.selected?.origin != null,
+    hasEvidence: selected?.origin != null,
     pageSourceMap: inspection?.sourceMap ?? "unknown",
   });
 
   /**
-   * Resolve where the selected element is written, as soon as the page reports a pick. The page hands
+   * The page the picks are about, named as a value rather than as an object.
+   *
+   * The effect below re-resolves when the batch changes *or* when the document does, and it must not
+   * re-resolve on hover: `hover` rewrites the state (and the page facts with it) on every element the
+   * cursor crosses — one fetch per picked element per hovered element is work nobody asked for. The
+   * picks' own array identity already carries the first half (`reducePick` only ever replaces it for a
+   * real change to the selection), and this URL carries the second.
+   */
+  const pickedPageUrl = pick.page === null ? null : pick.page.url;
+
+  /**
+   * Resolve where the picked elements are written, as soon as the page reports a pick. The page hands
    * over its framework's own evidence (`origin`), and this reads the module that evidence names and
    * maps the generated position back to a source location. It is deliberately *not* awaited by the
    * card: the DOM half of the payload is readable immediately, and the source row fills in when — and
    * if — the location resolves. An element with no evidence at all stays `none`, which is what an
    * element in a production build is.
+   *
+   * Every pick resolves again on **every change of the batch** — a new element added, one taken out, or
+   * the same element picked again, which is the case M4.1 measured: after a save the element has moved,
+   * and a re-pick has to be able to say so. The answers are keyed by selection identity (M5.1), and the
+   * map is emptied with the batch on purpose: an answer thrown away with the batch is one that can
+   * never be shown for the next one.
    *
    * The module text is read **fresh** for every pick, and that is a correction rather than a
    * preference (M4.1, measured in `实测脚本/m41-回指刷新验收/`): the reader used to cache by URL, which
@@ -319,35 +447,42 @@ export function WorkbenchPanel({
    * the cheaper side of that trade.
    */
   useEffect(() => {
-    const selected = pick.selected;
-    if (selected === null || pick.page === null) {
-      setResolvedSource(null);
+    // Read through the ref: the handler that changed the picks wrote the state there first, and the
+    // page facts are the freshest ones rather than the ones this render was painted from.
+    const state = pickRef.current;
+    const page = state.page;
+    if (state.picked.length === 0 || page === null) {
+      setResolvedSources(new Map());
       return;
     }
-    const identity = selectionIdentity(pick.page.url, selected.cssSelector);
     let cancelled = false;
-    // Clearing is about `pending`, not about safety: the tag already keeps this answer from being
-    // shown for another selection. It goes away with the pick so the row reads as "resolving" rather
-    // than as the previous answer for the *same* element, which may have moved on disk since (M4.1).
-    setResolvedSource(null);
-    void resolveSource(selected.origin ?? null, {
-      pageUrl: pick.page.url,
-      projectRoot: workspace,
-      fetchText: createModuleReader(),
-      moduleUrls: moduleUrlsRef.current,
-    })
-      .then((resolved) => {
-        if (!cancelled) setResolvedSource({ identity, source: resolved });
+    // Emptying the map is about `pending`, not about safety: the keys already keep an answer from
+    // being shown for another selection. It goes away with the batch so the rows read as "resolving"
+    // rather than as the previous answer for the *same* element, which may have moved on disk (M4.1).
+    setResolvedSources(new Map());
+    for (const target of state.picked) {
+      const identity = selectionIdentity(page.url, target.cssSelector);
+      const record = (resolved: PayloadSource): void => {
+        if (cancelled) return;
+        setResolvedSources((previous) => new Map(previous).set(identity, resolved));
+      };
+      void resolveSource(target.origin ?? null, {
+        pageUrl: page.url,
+        projectRoot: workspace,
+        fetchText: createModuleReader(),
+        moduleUrls: moduleUrlsRef.current,
       })
-      .catch(() => {
-        // `resolveSource` reports its own failures as `none`; this is for the unexpected one, and it
-        // must not leave the previous element's location on screen.
-        if (!cancelled) setResolvedSource({ identity, source: { confidence: "none" } });
-      });
+        .then(record)
+        .catch(() => {
+          // `resolveSource` reports its own failures as `none`; this is for the unexpected one, and it
+          // must not leave the previous element's location on screen.
+          record({ confidence: "none" });
+        });
+    }
     return () => {
       cancelled = true;
     };
-  }, [pick.selected, pick.page, workspace]);
+  }, [pick.picked, pickedPageUrl, workspace]);
 
   /**
    * The chip a payload becomes: the name a person reads, the `refId` that says which element it is,
@@ -375,6 +510,48 @@ export function WorkbenchPanel({
   );
 
   /**
+   * The line above a batch in the message: what the batch is, then the elements **by file** (L2.1-c).
+   *
+   * It is built from the same `groupByFile` that orders the payload's `elements`, so the sentence and
+   * the JSON can never disagree about which edits belong together, and it names each element the way
+   * the chip does (`span.badge "hello"`) with the line the panel resolved for it — the location is in
+   * the prose as well as in the JSON because a person reads the message too, and the file's own line
+   * is the first thing they check.
+   */
+  const batchLead = useCallback((inputs: readonly PayloadInput[]): string => {
+    const groups = groupByFile(inputs);
+    const lines = groups.map((group) =>
+      S.workbench.batchLine(
+        group.file ?? S.workbench.batchNoFile,
+        group.members
+          .map((member) =>
+            S.workbench.batchItem(elementLabel(member.target), member.source?.line ?? null),
+          )
+          .join("、"),
+      ),
+    );
+    return [S.workbench.batchLead(inputs.length, groups.length), ...lines].join("\n");
+  }, []);
+
+  /**
+   * The chip a batch becomes: one chip for one message (L2.1-b), named by how many elements and files
+   * it carries, and keyed by the set of elements it holds — so staging the same batch twice is an
+   * update rather than a second copy, exactly as re-staging one element is.
+   */
+  const batchReferenceOf = useCallback(
+    (inputs: readonly PayloadInput[], built: ElementPayloadBatch): ComposerReference => {
+      const files = groupByFile(inputs).length;
+      return {
+        kind: "element",
+        label: S.workbench.batchChip(inputs.length, files),
+        refId: batchRefId(built.elements.map((element) => element.target.refId)),
+        text: elementReferenceText(batchLead(inputs), built),
+      };
+    },
+    [batchLead],
+  );
+
+  /**
    * Hand the payload to the conversation: a chip in the composer, and — on send — the payload as a
    * fenced JSON block behind a line of prose. Nothing is sent and the draft is untouched: what the
    * workbench contributes is a thing the message is about, not words in the user's sentence.
@@ -383,70 +560,76 @@ export function WorkbenchPanel({
    * every element chip, and this is what it answers from (M4.1).
    */
   const addToConversation = useCallback(() => {
-    const target = pick.selected;
-    if (payload === null || target === null) return;
-    const reference = referenceOf(target, payload);
-    stagedPayloads.current.set(payload.target.refId, {
-      payload,
-      label: reference.label ?? payload.target.refId,
-    });
-    setGoneElements([]);
+    if (payload === null) return;
+    const reference =
+      payload.schemaVersion === 2
+        ? batchReferenceOf(items, payload)
+        : referenceOf(items[0]!.target, payload);
+    const entry: StagedEntry =
+      payload.schemaVersion === 2
+        ? {
+            kind: "batch",
+            elements: items.map((item, index) => ({
+              payload: payload.elements[index]!,
+              page: item.page,
+              target: item.target,
+              label: elementLabel(item.target),
+            })),
+          }
+        : {
+            kind: "single",
+            element: {
+              payload,
+              page: items[0]!.page,
+              target: items[0]!.target,
+              label: elementLabel(items[0]!.target),
+            },
+          };
+    if (reference.refId === undefined) return;
+    stagedPayloads.current.set(reference.refId, entry);
+    setGoneReport({ entries: [], held: false });
     onAddReference(reference);
-  }, [payload, pick.selected, onAddReference, referenceOf]);
+  }, [payload, items, onAddReference, referenceOf, batchReferenceOf]);
 
   /**
-   * Re-read one staged element from the page as it is now (M4.1 / AC-8).
+   * Re-read **one** staged element from the page as it is now (M4.1 / AC-8) — the page half of both
+   * the single chip and the batch, which is why it is a function of its own.
    *
-   * The composer calls this for every element chip immediately before a message is composed, so what
-   * the message carries is the page's current answer rather than the snapshot taken when the chip was
-   * staged: a line that moved with the user's last save, a style the edit changed, an id issued from
-   * the new site. Three honest ways out, and no fourth:
+   * Three honest ways out, and no fourth:
    *
-   * - **refreshed** — the element is there (same tag, same `data-testid` when it had one), and here it
-   *   is, as of now. `moved` says the source site is not the one the chip was staged with.
+   * - **fresh** — the element is there (same tag, same `data-testid` when it had one), and here it is,
+   *   as of now. `moved` says the source site is not the one it was staged with.
    * - **gone** — the page does not have it (`missing`), something else is at that path (`replaced`),
-   *   or the preview is on another page altogether (`page-changed`, AC-11c). Reported, and the send
-   *   is held: a payload the page has already contradicted is exactly the stale data R6 is about.
+   *   or the preview is on another page altogether (`page-changed`, AC-11c).
    * - **unknown** — we cannot check at all (no page loaded, no picker in it, or a guest that went away
-   *   mid-call). The chip keeps its snapshot, and nothing claims to have verified it.
+   *   mid-call). The element keeps its snapshot, and nothing claims to have verified it.
    */
-  const refreshStaged = useCallback(
-    async (refId: string): Promise<ElementRefresh> => {
-      const staged = stagedPayloads.current.get(refId);
+  const readStaged = useCallback(
+    async (staged: StagedElement, pageUrl: string | null): Promise<StagedRead> => {
       const guest = guestRef.current;
-      if (staged === undefined || guest === null || target === null || !pickRef.current.live) {
-        return { kind: "unknown" };
-      }
-      const reportGone = (reason: ElementGoneReason): ElementRefresh => {
-        setGoneElements((previous) =>
-          previous.some((entry) => entry.label === staged.label && entry.reason === reason)
-            ? previous
-            : [
-                ...previous.filter((entry) => entry.label !== staged.label),
-                { label: staged.label, reason },
-              ],
-        );
-        return { kind: "gone", reason };
-      };
-      const payload = staged.payload;
+      if (guest === null || pageUrl === null || !pickRef.current.live) return { kind: "unknown" };
       // The chip names a page; if the panel has been pointed somewhere else since, the chip is about a
       // document that is no longer on screen — and looking for its element in the new one is precisely
       // the mistake AC-11c names.
-      if (originOf(payload.page.url) !== originOf(target)) return reportGone("page-changed");
+      if (originOf(staged.page.url) !== originOf(pageUrl)) {
+        return { kind: "gone", reason: "page-changed" };
+      }
       let answer: unknown = null;
       try {
         answer = await guest.executeJavaScript(
-          pickerResolve(payload.target.cssSelector, payload.target.testId),
+          pickerResolve(staged.payload.target.cssSelector, staged.payload.target.testId),
         );
       } catch {
         return { kind: "unknown" };
       }
       const found = elementFromGuest(answer);
-      if (found === null) return reportGone("missing");
+      if (found === null) return { kind: "gone", reason: "missing" };
       // The path still matches something, but a same-shaped node is not the same element: the tag
       // (and, inside the picker, the testid) is what keeps "it moved" from being reported as "it is
       // still there" when the page was rewritten underneath the chip.
-      if (found.target.tagName !== payload.target.tagName) return reportGone("replaced");
+      if (found.target.tagName !== staged.payload.target.tagName) {
+        return { kind: "gone", reason: "replaced" };
+      }
       const source = await resolveSource(found.target.origin ?? null, {
         pageUrl: found.page.url,
         projectRoot: workspace,
@@ -461,22 +644,143 @@ export function WorkbenchPanel({
         projectRoot: workspace,
         source,
       });
-      const reference = referenceOf(found.target, built);
-      // Re-keyed rather than updated in place: the id is derived from the site, so an element that
-      // moved *has* a new one, and the old key would otherwise linger for every edit of the session.
-      stagedPayloads.current.delete(refId);
-      stagedPayloads.current.set(built.target.refId, {
-        payload: built,
-        label: reference.label ?? refId,
-      });
-      setGoneElements((previous) => previous.filter((entry) => entry.label !== reference.label));
+      const before = staged.payload.source;
       const moved =
-        payload.source.file !== built.source.file ||
-        payload.source.line !== built.source.line ||
-        payload.source.column !== built.source.column;
+        before.file !== built.source.file ||
+        before.line !== built.source.line ||
+        before.column !== built.source.column;
+      return {
+        kind: "refreshed",
+        element: {
+          payload: built,
+          page: found.page,
+          target: found.target,
+          label: elementLabel(found.target),
+        },
+        built,
+        moved,
+      };
+    },
+    [workspace],
+  );
+
+  /**
+   * Re-read a staged chip before the composer sends (M4.1 / AC-8, M4.5's AC-11c, L2.1-d).
+   *
+   * The composer calls this for every element chip immediately before a message is composed, so what
+   * the message carries is the page's current answer rather than the snapshot taken when the chip was
+   * staged. A single chip is L1's rule unchanged: gone holds the send, unknown keeps the snapshot.
+   *
+   * A batch re-reads **every** element and then asks `batchDecision`: all gone holds the message (there
+   * is nothing left to edit), some gone sends it with the rest — minus the elements that vanished,
+   * which the panel names and the chip counts. Rebuilding the chip from what survived is also what
+   * makes the message itself smaller: the JSON the user reads in the panel is the JSON that goes out.
+   */
+  const refreshStaged = useCallback(
+    async (refId: string): Promise<ElementRefresh> => {
+      const staged = stagedPayloads.current.get(refId);
+      if (staged === undefined || guestRef.current === null || target === null) {
+        return { kind: "unknown" };
+      }
+      const reportGone = (
+        entries: { label: string; reason: ElementGoneReason }[],
+        held: boolean,
+      ) => {
+        setGoneReport({ entries, held });
+      };
+      if (staged.kind === "single") {
+        const read = await readStaged(staged.element, target);
+        if (read.kind === "unknown") return { kind: "unknown" };
+        if (read.kind === "gone") {
+          reportGone([{ label: staged.element.label, reason: read.reason }], true);
+          return { kind: "gone", reason: read.reason };
+        }
+        const reference = referenceOf(read.element.target, read.built);
+        // Re-keyed rather than updated in place: the id is derived from the site, so an element that
+        // moved *has* a new one, and the old key would otherwise linger for every edit of the session.
+        stagedPayloads.current.delete(refId);
+        if (reference.refId !== undefined) {
+          stagedPayloads.current.set(reference.refId, { kind: "single", element: read.element });
+        }
+        reportGone([], false);
+        return { kind: "refreshed", reference, moved: read.moved };
+      }
+
+      // Every element is re-read before the decision is made, because the decision is about the batch
+      // as a whole: which of them are gone is only known once they all have been asked.
+      const reads: StagedRead[] = [];
+      for (const element of staged.elements) {
+        reads.push(await readStaged(element, target));
+      }
+      if (batchDecision(reads) === "hold") {
+        const entries = reads.map((read, index) => {
+          const element = staged.elements[index]!;
+          return {
+            label: element.label,
+            reason: read.kind === "gone" ? read.reason : ("missing" as ElementGoneReason),
+          };
+        });
+        reportGone(entries, true);
+        // A single `gone` is what the composer acts on — it holds the message and names the chip; the
+        // panel above is where each element's own reason is spelled out.
+        return { kind: "gone", reason: entries[0]?.reason ?? "missing" };
+      }
+      const goneEntries: { label: string; reason: ElementGoneReason }[] = [];
+      const kept: PayloadInput[] = [];
+      let moved = false;
+      reads.forEach((read, index) => {
+        const element = staged.elements[index]!;
+        if (read.kind === "gone") {
+          goneEntries.push({ label: element.label, reason: read.reason });
+          return;
+        }
+        // `unknown` keeps its snapshot: the page could not be asked, which is not the same answer as
+        // "the page does not have it" (L1's rule, kept).
+        const survivor = read.kind === "refreshed" ? read.element : element;
+        if (read.kind === "refreshed" && read.moved) moved = true;
+        kept.push({
+          target: survivor.target,
+          page: survivor.page,
+          projectRoot: workspace,
+          source: survivor.payload.source,
+        });
+      });
+      const first = kept[0];
+      if (first === undefined) return { kind: "gone", reason: "missing" };
+      const rebuilt = kept.length === 1 ? buildPayload(first) : buildBatchPayload(kept);
+      const reference: ComposerReference =
+        rebuilt.schemaVersion === 2
+          ? {
+              ...batchReferenceOf(kept, rebuilt),
+              ...(goneEntries.length === 0 ? {} : { dropped: goneEntries.length }),
+            }
+          : referenceOf(kept[0]!.target, rebuilt);
+      stagedPayloads.current.delete(refId);
+      const entries: StagedEntry =
+        rebuilt.schemaVersion === 2
+          ? {
+              kind: "batch",
+              elements: kept.map((item, index) => ({
+                payload: rebuilt.elements[index]!,
+                page: item.page,
+                target: item.target,
+                label: elementLabel(item.target),
+              })),
+            }
+          : {
+              kind: "single",
+              element: {
+                payload: rebuilt,
+                page: first.page,
+                target: first.target,
+                label: elementLabel(first.target),
+              },
+            };
+      if (reference.refId !== undefined) stagedPayloads.current.set(reference.refId, entries);
+      reportGone(goneEntries, false);
       return { kind: "refreshed", reference, moved };
     },
-    [target, workspace, referenceOf],
+    [target, workspace, referenceOf, batchReferenceOf, readStaged],
   );
 
   // The composer asks this panel — the only thing in the app that owns a guest — before it sends.
@@ -485,35 +789,55 @@ export function WorkbenchPanel({
   refreshRef.current = refreshStaged;
   useEffect(() => registerElementSource({ refresh: (refId) => refreshRef.current(refId) }), []);
 
-  /** Ask the page's picker to match the mode the panel is in. `missing` when there is no picker yet. */
-  const applyGuestMode = useCallback(async (next: PickMode) => {
+  /**
+   * Tell the page what the panel holds: the mode, whether clicks accumulate, and the picks themselves.
+   *
+   * One function for all three because they are one state — the page is not allowed to have a pick the
+   * panel has dropped, or to be following the cursor in single-select — and because the page both *is*
+   * the thing that draws the highlights and *is not* the thing that decides what a click means
+   * (L2.1-a). `missing` is a normal answer: a guest on its way out, whose next document installs its
+   * own picker and is synced by `dom-ready`.
+   */
+  const syncGuest = useCallback(async (state: PickState) => {
     const guest = guestRef.current;
     if (guest === null) return;
-    try {
-      await guest.executeJavaScript(pickerCommand(next));
-    } catch {
-      // The guest can go away between a click and this call — a reload, a closed panel. The next
-      // dom-ready installs the picker again and applies whatever the mode is by then.
+    const commands = [
+      pickerCommand(pickMode(state)),
+      pickerMulti(state.multi),
+      pickerSetPicked(state.picked.map((entry) => entry.cssSelector)),
+    ];
+    for (const command of commands) {
+      try {
+        await guest.executeJavaScript(command);
+      } catch {
+        // The guest can go away between a click and this call — a reload, a closed panel. The next
+        // dom-ready installs the picker again and syncs whatever the state is by then.
+        return;
+      }
     }
   }, []);
 
   /**
-   * The panel's one way to change picker state. The reducer decides, the ref makes the decision
-   * readable from the guest's handlers, and only a *change of mode* is forwarded to the page: hover
-   * and selection events came from there in the first place, and echoing them back would be a loop.
+   * The panel's one way to change picker state: the reducer decides, and the ref makes the decision
+   * readable from the guest's event handlers (which are installed once per address).
    */
-  const dispatchPick = useCallback(
-    (event: PickEvent) => {
-      const previous = pickRef.current;
-      const next = reducePick(previous, event);
-      pickRef.current = next;
-      setPick(next);
-      const before = pickMode(previous);
-      const after = pickMode(next);
-      if (after !== before) void applyGuestMode(after);
-    },
-    [applyGuestMode],
-  );
+  const dispatchPick = useCallback((event: PickEvent) => {
+    const next = reducePick(pickRef.current, event);
+    pickRef.current = next;
+    setPick(next);
+  }, []);
+
+  /**
+   * Push that state to the page whenever one of the three things the page acts on changes.
+   *
+   * Deliberately not keyed on the state object: hover rewrites it on every element the cursor crosses,
+   * and three IPC calls per hover would be work the page has no use for — and work m56's click-to-card
+   * timings would pay for. `pickRef` rather than `pick` so the effect sends the state the reducer just
+   * produced, not the one this render was painted from.
+   */
+  useEffect(() => {
+    void syncGuest(pickRef.current);
+  }, [pick.wanted, pick.paused, pick.multi, pick.picked, syncGuest]);
 
   /**
    * Esc in the panel itself. The page's Esc arrives over the console channel instead — whichever of
@@ -622,7 +946,7 @@ export function WorkbenchPanel({
           if (result !== "installed") return;
           dispatchPick({ kind: "installed" });
           void collectModuleUrls();
-          return applyGuestMode(pickMode(pickRef.current));
+          return syncGuest(pickRef.current);
         })
         .catch(() => {
           // A guest that went away while we were talking to it: the next one installs its own picker.
@@ -684,7 +1008,7 @@ export function WorkbenchPanel({
       // away, so it is not carried over (the switch itself is: see `reducePick`).
       dispatchPick({ kind: "guest-gone" });
     };
-  }, [inShell, target, dispatchPick, applyGuestMode]);
+  }, [inShell, target, dispatchPick, syncGuest]);
 
   if (!inShell) {
     return (
@@ -738,11 +1062,28 @@ export function WorkbenchPanel({
    * below — the copy is bilingual and lives in the strings tables.
    */
   const bounds = boundsNotes({
-    target: pick.selected,
+    target: selected,
     picking: mode === "picking",
     frameCount,
   });
-  const boundsHost = pick.selected === null ? "" : describeTarget(pick.selected);
+  const boundsHost = selected === null ? "" : describeTarget(selected);
+
+  /**
+   * The source sentence for one element of a batch — the same `sourceRowText` the single-element card
+   * uses, with the same reason derived from the same facts, so "精确 src/App.jsx:7:7" means one thing in
+   * this panel whichever card it is read on.
+   */
+  const sourceRowFor = (input: PayloadInput): string => {
+    const resolved = input.source ?? { confidence: "none" as const };
+    return sourceRowText(resolved, {
+      pending: input.source === undefined,
+      gap: explainSourceGap({
+        source: resolved,
+        hasEvidence: input.target.origin != null,
+        pageSourceMap: inspection?.sourceMap ?? "unknown",
+      }),
+    });
+  };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -815,6 +1156,16 @@ export function WorkbenchPanel({
           >
             {mode === "off" ? S.workbench.pickStart : S.workbench.pickStop}
           </Button>
+          {/* Multi-select (L2.1-a): a state inside pick mode, so it is offered while there is picking
+              to be in, and it says which of the two it currently is. */}
+          <Button
+            size="sm"
+            variant={pick.multi ? "primary" : "ghost"}
+            disabled={mode === "off"}
+            onClick={() => dispatchPick({ kind: "multi-toggle" })}
+          >
+            {pick.multi ? S.workbench.multiStop : S.workbench.multiStart}
+          </Button>
           {mode === "paused" ? (
             <Button size="sm" variant="primary" onClick={() => dispatchPick({ kind: "resume" })}>
               {S.workbench.pickResume}
@@ -829,13 +1180,50 @@ export function WorkbenchPanel({
               {S.workbench.pickPause}
             </Button>
           )}
-          <span className="min-w-0 flex-1 truncate font-mono text-xs text-gray-500 dark:text-gray-400">
-            {pick.selected !== null
-              ? `${S.workbench.picked} ${describeTarget(pick.selected)}`
+          <span
+            data-workbench-count={pick.picked.length}
+            className="min-w-0 flex-1 truncate font-mono text-xs text-gray-500 dark:text-gray-400"
+          >
+            {selected !== null
+              ? `${S.workbench.picked} ${describeTarget(selected)}`
               : pick.hovered !== null && mode === "picking"
                 ? `${S.workbench.candidate} ${describeTarget(pick.hovered)}`
                 : ""}
+            {pick.multi && pick.picked.length > 0 && (
+              <span className="ml-1.5 font-sans">{S.workbench.multiCount(pick.picked.length)}</span>
+            )}
           </span>
+        </div>
+      )}
+
+      {/* The batch, element by element (L2.1-a: the count is not enough — one has to be removable).
+          Each row is the element's own description and a ×, and the × is the same unpick the page's
+          second click does, so the two ways of trimming a batch are one rule with two entrances. */}
+      {guestState.kind === "ready" && pick.multi && pick.picked.length > 0 && (
+        <div
+          data-workbench-picks="1"
+          className="shrink-0 border-b border-gray-200 px-3 py-1.5 dark:border-gray-800"
+        >
+          <span className="mr-1.5 text-xs text-gray-400">
+            {S.workbench.multiCount(pick.picked.length)}
+          </span>
+          {pick.picked.map((entry) => (
+            <span
+              key={entry.cssSelector}
+              data-workbench-pick={entry.cssSelector}
+              className="mr-1 inline-flex items-center gap-1 rounded-md bg-gray-100 py-0.5 pl-2 pr-1 font-mono text-xs text-gray-800 dark:bg-gray-800 dark:text-gray-200"
+            >
+              <span className="max-w-40 truncate">{describeTarget(entry)}</span>
+              <button
+                type="button"
+                aria-label={S.workbench.multiRemove(describeTarget(entry))}
+                onClick={() => dispatchPick({ kind: "unpick", cssSelector: entry.cssSelector })}
+                className="rounded p-0.5 text-gray-400 transition-colors duration-150 hover:text-gray-700 dark:hover:text-gray-200"
+              >
+                ×
+              </button>
+            </span>
+          ))}
         </div>
       )}
 
@@ -860,19 +1248,22 @@ export function WorkbenchPanel({
         </div>
       )}
 
-      {/* What a send-time re-resolution found (AC-8): an element the page no longer has, said here as
-          well as on the chip, because this panel is the thing that asked the page the question. */}
-      {goneElements.length > 0 && (
+      {/* What a send-time re-resolution found (AC-8, L2.1-d): elements the page no longer has, said
+          here as well as on the chip, because this panel is the thing that asked the page the
+          question. A batch that lost some of its elements was still **sent** — so the line under it
+          says which of the two happened rather than assuming the message was held. */}
+      {goneReport.entries.length > 0 && (
         <div
+          data-workbench-gone={goneReport.held ? "held" : "dropped"}
           className={`shrink-0 border-b border-gray-200 px-3 py-1.5 dark:border-gray-800 ${strip("attention")}`}
         >
           <p className="text-xs">
-            {goneElements
+            {goneReport.entries
               .map((entry) => S.workbench.goneElement(entry.label, entry.reason))
               .join(" ")}
           </p>
           <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-            {S.workbench.goneElementDetail}
+            {goneReport.held ? S.workbench.goneElementDetail : S.workbench.goneElementDetailPartial}
           </p>
         </div>
       )}
@@ -884,16 +1275,24 @@ export function WorkbenchPanel({
         <div className="shrink-0 border-b border-gray-200 dark:border-gray-800">
           <div className="flex items-center gap-2 px-3 pt-1.5">
             <span className="min-w-0 flex-1 truncate text-xs font-medium text-gray-600 dark:text-gray-300">
-              {S.workbench.payload.title}
+              {batch === null
+                ? S.workbench.payload.title
+                : S.workbench.payload.batchTitle(batch.elements.length, groupByFile(items).length)}
             </span>
             <Button size="sm" variant="primary" onClick={addToConversation}>
               {S.workbench.addToChat}
             </Button>
           </div>
           <div className="max-h-32 overflow-y-auto px-3 py-1">
-            {payloadRows(
-              payload,
-              sourceRowText(payload.source, { pending: sourcePending, gap: sourceGap }),
+            {(batch === null
+              ? payloadRows(
+                  payload as ElementPayload,
+                  sourceRowText((payload as ElementPayload).source, {
+                    pending: sourcePending,
+                    gap: sourceGap,
+                  }),
+                )
+              : batchRows(items, sourceRowFor)
             ).map((row) => (
               <div key={row.label} className="flex gap-2 text-xs leading-5">
                 <span className="w-14 shrink-0 text-gray-400">{row.label}</span>
@@ -912,7 +1311,7 @@ export function WorkbenchPanel({
               glance; the JSON is one click away for when you want it verbatim. */}
           <details className="px-3 pb-2">
             <summary className="cursor-pointer text-xs text-gray-500 dark:text-gray-400">
-              {S.workbench.payload.json}
+              {batch === null ? S.workbench.payload.json : S.workbench.payload.jsonBatch}
             </summary>
             <pre
               data-workbench-payload="1"
@@ -961,13 +1360,17 @@ export function WorkbenchPanel({
 
       {guestState.kind === "ready" && (
         <p className={strip("muted")}>
-          {pick.selected !== null
-            ? S.workbench.pickedNext
-            : mode === "paused"
-              ? S.workbench.pausedHint
-              : mode === "off"
-                ? S.workbench.pickOffHint
-                : S.workbench.pickHint}
+          {selected !== null
+            ? pick.picked.length > 1
+              ? S.workbench.pickedNextBatch(pick.picked.length)
+              : S.workbench.pickedNext
+            : pick.multi
+              ? S.workbench.multiHint
+              : mode === "paused"
+                ? S.workbench.pausedHint
+                : mode === "off"
+                  ? S.workbench.pickOffHint
+                  : S.workbench.pickHint}
         </p>
       )}
     </div>

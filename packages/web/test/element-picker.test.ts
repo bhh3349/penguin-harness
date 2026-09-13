@@ -15,8 +15,10 @@ import {
   parsePickerMessage,
   pickerCommand,
   pickerFrameCount,
+  pickerMulti,
   pickerProbe,
   pickerResolve,
+  pickerSetPicked,
   pickerScript,
 } from "../src/features/workbench/element-picker";
 import type { ElementFacts, PageFacts } from "../src/features/workbench/element-picker";
@@ -218,6 +220,33 @@ describe("what the panel tells the page", () => {
     expect(pickerCommand("off")).toContain(".pause()");
     expect(pickerCommand("off")).toContain('"missing"');
     expect(pickerProbe()).toContain("typeof");
+  });
+
+  /**
+   * L2.1-a: the page draws the highlights, the panel owns the list. These are the two calls that keep
+   * the two in step — the pick list, and whether hover keeps following the cursor — and both go through
+   * the same "installed API or `missing`" shape as the mode, because a guest on its way out is normal.
+   */
+  it("hands the page the panel's pick list, and whether it is in multi-select", () => {
+    const picked = pickerSetPicked(["div.card > span.badge", 'main > h2[data-testid="t"]']);
+    expect(picked).toContain(".setPicked(");
+    // The selectors travel as JSON: a path with a quote or a bracket in it must not break the call.
+    expect(picked).toContain(
+      JSON.stringify(["div.card > span.badge", 'main > h2[data-testid="t"]']),
+    );
+    expect(picked).toContain('"missing"');
+    expect(pickerSetPicked([])).toContain(".setPicked([])");
+    expect(pickerMulti(true)).toContain(".setMulti(true)");
+    expect(pickerMulti(false)).toContain(".setMulti(false)");
+    expect(pickerMulti(false)).toContain('"missing"');
+  });
+
+  it("carries the pick list as its own command rather than as part of the mode", () => {
+    // Two independent facts, deliberately: a batch of three is not a fourth mode, and switching to
+    // multi-select must not clear what is already picked.
+    expect(pickerScript()).toContain("setPicked");
+    expect(pickerScript()).toContain("setMulti");
+    expect(pickerScript()).toContain("pickBoxes");
   });
 });
 

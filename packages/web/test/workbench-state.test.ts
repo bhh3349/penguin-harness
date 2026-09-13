@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_ADDRESS,
   classifyLoadFailure,
+  currentPick,
   entryModuleUrl,
   hasSourceMap,
   initialAddress,
@@ -27,6 +28,7 @@ import type {
   PickState,
 } from "../src/features/workbench/workbench-state";
 import type { ElementFacts } from "../src/features/workbench/element-picker";
+import type { PayloadSource } from "../src/features/workbench/element-payload";
 
 describe("normalizeAddress", () => {
   it("gives a bare host:port a scheme, because that is how the address gets typed", () => {
@@ -169,7 +171,14 @@ describe("reducePick", () => {
     rect: { x: 10, y: 20, width: 40, height: 18 },
     parentChain: ["div.card"],
   };
-  const button: ElementFacts = { ...badge, tagName: "button", classList: ["primary"] };
+  // Two elements of the same fixture, with the paths the picker would build for them: within one
+  // document a path names exactly one node, which is what `samePick` compares.
+  const button: ElementFacts = {
+    ...badge,
+    tagName: "button",
+    classList: ["primary"],
+    cssSelector: "div.card > button.primary",
+  };
   const page = {
     url: "http://127.0.0.1:5199/",
     title: "fixture",
@@ -203,21 +212,21 @@ describe("reducePick", () => {
   it("clears the highlight on the first Esc and leaves pick mode on the second", () => {
     const selected = fold([{ kind: "selected", target: badge, page }]);
     const cleared = reducePick(selected, { kind: "escape" });
-    expect(cleared.selected).toBeNull();
+    expect(cleared.picked).toEqual([]);
     expect(pickMode(cleared)).toBe("picking");
     expect(pickMode(reducePick(cleared, { kind: "escape" }))).toBe("off");
   });
 
   it("keeps the selection across 暂离, because standing down is not forgetting", () => {
     const paused = fold([{ kind: "selected", target: badge, page }, { kind: "pause" }]);
-    expect(paused.selected).toEqual(badge);
+    expect(paused.picked).toEqual([badge]);
     expect(pickMode(paused)).toBe("paused");
     expect(pickMode(reducePick(paused, { kind: "resume" }))).toBe("picking");
   });
 
   it("takes the page's own word for it when the page's picker cleared or left", () => {
     const cleared = fold([{ kind: "selected", target: badge, page }, { kind: "cleared" }]);
-    expect(cleared.selected).toBeNull();
+    expect(cleared.picked).toEqual([]);
     // The page it was found on stays: only the selection went away.
     expect(cleared.page).toEqual(page);
     expect(pickMode(fold([{ kind: "selected", target: badge, page }, { kind: "exited" }]))).toBe(
@@ -231,7 +240,97 @@ describe("reducePick", () => {
       { kind: "selected", target: button, page },
     ]);
     expect(state.hovered).toEqual(badge);
-    expect(state.selected).toEqual(button);
+    expect(state.picked).toEqual([button]);
+  });
+
+  /**
+   * Multi-select (L2.1-a). The mode is a state inside pick mode, and these are the four things it
+   * promises: the default is L1's single selection, clicks accumulate while it is on, one can be taken
+   * back out both ways, and leaving it lands on a single selection rather than on half a batch.
+   */
+  describe("multi-select", () => {
+    const third: ElementFacts = { ...badge, cssSelector: "main > h2.card-title" };
+    const multi = fold([{ kind: "multi-toggle" }]);
+    /** Fold events on top of "multi-select is on" — the state every case here starts from. */
+    const inMulti = (events: PickEvent[]): PickState => events.reduce(reducePick, multi);
+
+    it("is off by default, and a click still replaces the selection while it is", () => {
+      expect(NO_PICK.multi).toBe(false);
+      const state = fold([
+        { kind: "selected", target: badge, page },
+        { kind: "selected", target: button, page },
+      ]);
+      expect(state.picked).toEqual([button]);
+    });
+
+    it("accumulates clicks in order once it is on", () => {
+      const state = inMulti([
+        { kind: "selected", target: badge, page },
+        { kind: "selected", target: button, page },
+        { kind: "selected", target: third, page },
+      ]);
+      expect(state.picked.map((entry) => entry.cssSelector)).toEqual([
+        badge.cssSelector,
+        button.cssSelector,
+        third.cssSelector,
+      ]);
+      // The card still reads the last one picked, which is what `currentPick` is for.
+      expect(currentPick(state)).toEqual(third);
+    });
+
+    it("takes an element back out when it is clicked again, and in no other position", () => {
+      const state = inMulti([
+        { kind: "selected", target: badge, page },
+        { kind: "selected", target: button, page },
+        { kind: "selected", target: badge, page },
+      ]);
+      expect(state.picked.map((entry) => entry.cssSelector)).toEqual([button.cssSelector]);
+    });
+
+    it("drops one by selector — the panel's × is the same rule as the second click", () => {
+      const state = inMulti([
+        { kind: "selected", target: badge, page },
+        { kind: "selected", target: button, page },
+        { kind: "unpick", cssSelector: badge.cssSelector },
+      ]);
+      expect(state.picked).toEqual([button]);
+    });
+
+    it("clears the whole batch on one Esc, and only then leaves pick mode", () => {
+      const state = inMulti([
+        { kind: "selected", target: badge, page },
+        { kind: "selected", target: button, page },
+      ]);
+      const cleared = reducePick(state, { kind: "escape" });
+      expect(cleared.picked).toEqual([]);
+      expect(cleared.multi).toBe(true);
+      expect(pickMode(cleared)).toBe("picking");
+      expect(pickMode(reducePick(cleared, { kind: "escape" }))).toBe("off");
+    });
+
+    it("lands on the last pick when the mode is left — never on a batch shown as one element", () => {
+      const state = inMulti([
+        { kind: "selected", target: badge, page },
+        { kind: "selected", target: button, page },
+        { kind: "multi-toggle" },
+      ]);
+      expect(state.multi).toBe(false);
+      expect(state.picked).toEqual([button]);
+      // Turning it back on keeps what is selected: entering the mode is not a new selection.
+      expect(reducePick(state, { kind: "multi-toggle" }).picked).toEqual([button]);
+    });
+
+    it("drops every pick with the document they were picked in", () => {
+      const state = inMulti([
+        { kind: "selected", target: badge, page },
+        { kind: "selected", target: button, page },
+      ]);
+      const loaded = reducePick(state, { kind: "installed" });
+      expect(loaded.picked).toEqual([]);
+      expect(loaded.page).toBeNull();
+      // The mode itself survives a reload, like the switch: it is the user's, not the page's.
+      expect(loaded.multi).toBe(true);
+    });
   });
 
   it("keeps the page the element was picked on, and drops it with the document", () => {
@@ -303,9 +402,10 @@ describe("selectionIdentity", () => {
 describe("sourceFor", () => {
   const identity = selectionIdentity("http://localhost:5173/", ".card-title");
   const source = { confidence: "exact" as const, file: "src/App.jsx", line: 7, column: 7 };
+  const resolved = new Map<string, PayloadSource>([[identity, source]]);
 
-  it("answers with the resolution tagged for this selection", () => {
-    expect(sourceFor({ identity, source }, identity)).toEqual(source);
+  it("answers with the resolution keyed by this selection", () => {
+    expect(sourceFor(resolved, identity)).toEqual(source);
   });
 
   it("answers with nothing for another selection — the frame the card used to get wrong", () => {
@@ -313,11 +413,23 @@ describe("sourceFor", () => {
     // and the element on screen is the new one. The old file and line are not this element's, so the
     // row must read `pending`, not the previous element's location.
     const other = selectionIdentity("http://localhost:5173/", '[data-testid="badge"]');
-    expect(sourceFor({ identity, source }, other)).toBeNull();
+    expect(sourceFor(resolved, other)).toBeNull();
+  });
+
+  it("holds several resolutions at once — a batch resolves element by element (L2.1)", () => {
+    // The map is what makes a batch possible without giving up the promise above: each element's
+    // answer is filed under its own identity, so three of them can be in flight together.
+    const second = selectionIdentity("http://localhost:5173/", '[data-testid="badge"]');
+    const both = new Map<string, PayloadSource>([
+      [identity, source],
+      [second, { confidence: "file-only", file: "src/Badge.jsx" }],
+    ]);
+    expect(sourceFor(both, identity)).toEqual(source);
+    expect(sourceFor(both, second)).toEqual({ confidence: "file-only", file: "src/Badge.jsx" });
   });
 
   it("answers with nothing when there is no resolution, or no selection to ask about", () => {
-    expect(sourceFor(null, identity)).toBeNull();
-    expect(sourceFor({ identity, source }, null)).toBeNull();
+    expect(sourceFor(new Map(), identity)).toBeNull();
+    expect(sourceFor(resolved, null)).toBeNull();
   });
 });

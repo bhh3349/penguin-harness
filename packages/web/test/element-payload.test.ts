@@ -13,16 +13,19 @@ import {
   PAYLOAD_KIND,
   PAYLOAD_SCHEMA_VERSION,
   SELECTOR_NOTE,
+  batchRefId,
+  buildBatchPayload,
   buildPayload,
   canonicalSite,
   elementLabel,
   elementReferenceText,
   fnv1a64Hex,
+  groupByFile,
   issueRefId,
   projectNameOf,
   semanticKey,
 } from "../src/features/workbench/element-payload";
-import type { RefSite } from "../src/features/workbench/element-payload";
+import type { PayloadSource, RefSite } from "../src/features/workbench/element-payload";
 import type { ElementFacts, PageFacts } from "../src/features/workbench/element-picker";
 
 const badge: ElementFacts = {
@@ -252,6 +255,96 @@ describe("buildPayload", () => {
     expect(built.target.attributes).toEqual({ class: "badge badge-blue" });
     expect(built.target.parentChain).toEqual(["div.card", "main#content"]);
     expect(built.style.computed["font-size"]).toBe("12px");
+  });
+});
+
+/**
+ * A batch (L2.1-b): several elements of one page, `elements: [...]` sharing a `page` — the shape PRD §6
+ * rule 4 reserved. What matters here is *which shape a count produces* (one stays v1, because an Agent
+ * that has only ever seen one element must never meet a new one), and the grouping (L2.1-c): the same
+ * file is one group, and the group order is the order the user picked.
+ */
+describe("buildBatchPayload", () => {
+  const app = { source: { file: "src/App.jsx", line: 7, column: 7, confidence: "exact" as const } };
+  const badgeAt = (selector: string, source: PayloadSource) => ({
+    target: { ...badge, cssSelector: selector },
+    page,
+    projectRoot: "/opt/OH-WorkSpace/my-app",
+    source,
+  });
+  const first = badgeAt("main > h2.card-title", app.source);
+  const second = badgeAt("main > span.badge", {
+    file: "src/Badge.jsx",
+    line: 5,
+    column: 6,
+    confidence: "exact",
+  });
+  const third = badgeAt("main > button.primary", {
+    file: "src/App.jsx",
+    line: 20,
+    confidence: "exact",
+  });
+
+  it("is v2 with the page stated once and one element each", () => {
+    const batch = buildBatchPayload([first, second, third]);
+    expect(batch.kind).toBe(PAYLOAD_KIND);
+    expect(batch.schemaVersion).toBe(2);
+    expect(batch.elements).toHaveLength(3);
+    expect(batch.page.projectRoot).toBe("/opt/OH-WorkSpace/my-app");
+    // `page` is not repeated per element: that is what "共用同一个 page" means in the JSON.
+    expect(batch.elements.every((element) => !("page" in element))).toBe(true);
+    expect(batch.note).toBe(SELECTOR_NOTE);
+  });
+
+  it("keeps one element in the v1 shape — the shape follows the count, not the mode", () => {
+    const single = buildPayload(first);
+    expect(single.schemaVersion).toBe(PAYLOAD_SCHEMA_VERSION);
+    // The difference the Agent sees: a v1 payload carries its element at the top level, a batch does
+    // not. Nothing else in the single-element message changed.
+    expect("elements" in single).toBe(false);
+    expect(single.target.refId).toMatch(/^el-/);
+  });
+
+  it("orders the elements by file, same file together, first-picked group first (L2.1-c)", () => {
+    const batch = buildBatchPayload([first, second, third]);
+    expect(batch.elements.map((element) => element.source.file)).toEqual([
+      "src/App.jsx",
+      "src/App.jsx",
+      "src/Badge.jsx",
+    ]);
+    // Within a group the user's order stands: App.jsx line 7 before line 20.
+    expect(batch.elements.map((element) => element.source.line)).toEqual([7, 20, 5]);
+    // The later element of the first group is the one that names that group, so a different order of
+    // the same picks is the same payload order.
+    const reordered = buildBatchPayload([third, first, second]);
+    expect(reordered.elements.map((element) => element.source.file)).toEqual([
+      "src/App.jsx",
+      "src/App.jsx",
+      "src/Badge.jsx",
+    ]);
+  });
+
+  it("gives elements nothing could locate a group of their own, never an invented file", () => {
+    const batch = buildBatchPayload([second, badgeAt("main > i", { confidence: "none" })]);
+    const groups = groupByFile(
+      batch.elements.map((element) => ({ source: element.source, target: element.target })),
+    );
+    expect(groups.map((group) => group.file)).toEqual(["src/Badge.jsx", null]);
+  });
+
+  it("refuses a batch with no elements rather than writing a page nobody picked on", () => {
+    expect(() => buildBatchPayload([])).toThrow();
+  });
+});
+
+describe("batchRefId", () => {
+  it("is one id for one set, in any order — staging the same batch again is an update", () => {
+    expect(batchRefId(["el-a", "el-b"])).toBe(batchRefId(["el-b", "el-a"]));
+    expect(batchRefId(["el-a", "el-b"])).not.toBe(batchRefId(["el-a"]));
+  });
+
+  it("is not an element id: it can never be mistaken for one of its members", () => {
+    expect(batchRefId(["el-a"])).toMatch(/^elb-[0-9a-f]{16}$/);
   });
 });
 

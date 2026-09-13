@@ -2675,14 +2675,25 @@ Scenarios:
     pickStop: "Stop picking",
     pickPause: "Stand down",
     pickResume: "Pick again",
+    /** Multi-select (L2.1-a) — see the zh dictionary for why the copy names both gestures. */
+    multiStart: "Pick several",
+    multiStop: "Leave multi-select",
+    multiCount: (count: number) => `${count} selected`,
+    multiRemove: (name: string) => `Drop ${name} from the selection`,
+    /** The chip a whole batch wears in the composer: one chip, one message (L2.1-b). */
+    batchChip: (count: number, files: number) => `${count} elements / ${files} files`,
     candidate: "Candidate",
     picked: "Selected",
     pickHint:
       "Hover to highlight, click to select — that click never reaches the page. Esc clears the selection, and a second Esc leaves pick mode. For something you cannot reach yet, Stand down hands the page back to you; Pick again resumes.",
+    multiHint:
+      "Multi-select is on: each click adds an element to the batch, and clicking one again takes it out. Add to conversation puts the whole batch into one message — several edits in one file, or several files at once.",
     pausedHint:
       "Standing down: the page is entirely yours — open dropdowns, modals and hover layers, then Pick again to keep going (L1 will not open them for you).",
     pickOffHint: "Picking is off: the page behaves exactly as it normally does.",
     pickedNext: "The payload is assembled above; Add to conversation stages it in the composer.",
+    pickedNextBatch: (count: number) =>
+      `This batch (${count} elements) is assembled above; Add to conversation stages them in one message.`,
     addToChat: "Add to conversation",
     /** One element a send-time re-resolution could not find (AC-8), and which way it went. */
     goneElement: (label: string, reason: "missing" | "replaced" | "page-changed") =>
@@ -2693,8 +2704,13 @@ Scenarios:
           : `Page changed: ${label} was picked on another page`,
     goneElementDetail:
       "This one will not be sent — pick it again, or drop the chip from the composer.",
+    /** L2.1-d's other half: a batch with some elements gone is sent, minus those elements. */
+    goneElementDetailPartial:
+      "Those are dropped from this message and the rest is sent; to bring them back, pick them again in the preview.",
     /** The chip itself, when its element is not in the page any more. */
     goneChip: "gone",
+    /** A batch chip that went out with fewer elements than it was staged with (L2.1-d). */
+    droppedChip: (count: number) => `${count} dropped`,
     /** The composer is held rather than send a chip the page has already contradicted. */
     sendHeld: (detail: string) => `Not sent: ${detail}`,
     /** The line above the payload in the message: what was picked, and on which page. */
@@ -2734,6 +2750,8 @@ Scenarios:
       `This page embeds ${count} iframe(s): L1 does not enter frames, so nothing inside them can be picked.`,
     payload: {
       title: "Payload (§6 v1)",
+      batchTitle: (count: number, files: number) =>
+        `Payload (§6 v2 · ${count} elements / ${files} files)`,
       refId: "refId",
       selector: "Selector",
       tag: "Tag",
@@ -2744,11 +2762,20 @@ Scenarios:
       rect: "Box",
       parentChain: "Ancestors",
       classes: "Classes",
+      elements: "Elements",
       project: "Project",
       page: "Page",
       source: "Source",
       json: "Payload JSON (v1)",
+      jsonBatch: "Payload JSON (v2)",
     },
+    /** The batch's line in the message (L2.1-c) — same grouping as the payload's `elements` order. */
+    batchLead: (count: number, files: number) =>
+      `Picked UI elements (${count}, from ${files} files, same file together):`,
+    batchLine: (file: string, items: string) => `· ${file} — ${items}`,
+    batchItem: (label: string, line: number | null) =>
+      line === null ? label : `${label} (line ${line})`,
+    batchNoFile: "no source location yet",
     /**
      * The `source` row, said as the tier it landed in (FR-07's four levels), with the reason spelled
      * out when there is no location. These are the words a user reads to decide whether to keep

@@ -128,8 +128,18 @@ function installWorkbenchPicker(channel: string, sniffOrigin: (el: Element) => u
 
   const state = {
     active: false,
+    /**
+     * Multi-select, as the panel has it (L2.1-a). The page does not decide it — the panel sends it
+     * with `setMulti` — but the page is the only one that can see whether hover has to keep following
+     * the cursor, which is what this flag is for.
+     */
+    multi: false,
     hovered: null as Element | null,
-    selected: null as Element | null,
+    /**
+     * The picked elements, **as the panel has them** (`setPicked`). Not a list the page maintains:
+     * one owner, so the green boxes on screen can never claim a selection the panel does not hold.
+     */
+    picked: [] as Element[],
   };
   let lastX = 0;
   let lastY = 0;
@@ -413,42 +423,120 @@ function installWorkbenchPicker(channel: string, sniffOrigin: (el: Element) => u
     },
   });
 
-  const box = document.createElement("div");
-  box.setAttribute("data-penguin-workbench", "overlay");
-  box.setAttribute("aria-hidden", "true");
-  box.style.cssText =
-    "position:fixed;left:0;top:0;width:0;height:0;display:none;pointer-events:none;" +
-    "box-sizing:border-box;border:2px solid #3b82f6;background:rgba(59,130,246,0.18);" +
-    "border-radius:2px;margin:0;padding:0;z-index:2147483647;transition:none";
-  const label = document.createElement("span");
-  label.style.cssText =
-    "position:absolute;left:-2px;max-width:320px;padding:1px 5px;white-space:nowrap;overflow:hidden;" +
-    "text-overflow:ellipsis;font:11px/16px ui-monospace,SFMono-Regular,Menlo,monospace;color:#fff;" +
-    "background:#3b82f6;border-radius:2px";
-  box.appendChild(label);
+  /**
+   * One highlight box and its label.
+   *
+   * A **pool** of them rather than one, because a batch puts several picked elements on screen at
+   * once and each one has to keep saying which element it is (L2.1-a): a single box would move to the
+   * newest pick and the panel would be counting elements the user can no longer see. The hover box is
+   * one of the same kind, so there is one bit of drawing code and not two.
+   *
+   * `position: fixed` with `pointer-events: none`: it cannot affect the page's layout (PRD §7), and it
+   * cannot become the element under the cursor.
+   */
+  const makeBox = (): { box: HTMLElement; label: HTMLElement } => {
+    const box = document.createElement("div");
+    box.setAttribute("data-penguin-workbench", "overlay");
+    box.setAttribute("aria-hidden", "true");
+    box.style.cssText =
+      "position:fixed;left:0;top:0;width:0;height:0;display:none;pointer-events:none;" +
+      "box-sizing:border-box;border:2px solid #3b82f6;background:rgba(59,130,246,0.18);" +
+      "border-radius:2px;margin:0;padding:0;z-index:2147483647;transition:none";
+    const label = document.createElement("span");
+    label.style.cssText =
+      "position:absolute;left:-2px;max-width:320px;padding:1px 5px;white-space:nowrap;overflow:hidden;" +
+      "text-overflow:ellipsis;font:11px/16px ui-monospace,SFMono-Regular,Menlo,monospace;color:#fff;" +
+      "background:#3b82f6;border-radius:2px";
+    box.appendChild(label);
+    return { box: box, label: label };
+  };
 
-  const paint = (el: Element, locked: boolean): void => {
+  const mount = (entry: { box: HTMLElement }): void => {
+    if (entry.box.parentNode === null) document.documentElement.appendChild(entry.box);
+  };
+
+  const place = (
+    entry: { box: HTMLElement; label: HTMLElement },
+    el: Element,
+    locked: boolean,
+  ): void => {
     if (!el.isConnected) {
-      hide();
+      entry.box.style.display = "none";
       return;
     }
     const rect = el.getBoundingClientRect();
     const colour = locked ? "#10b981" : "#3b82f6";
-    box.style.display = "block";
-    box.style.left = rect.left + "px";
-    box.style.top = rect.top + "px";
-    box.style.width = rect.width + "px";
-    box.style.height = rect.height + "px";
-    box.style.borderColor = colour;
-    label.style.background = colour;
+    entry.box.style.display = "block";
+    entry.box.style.left = rect.left + "px";
+    entry.box.style.top = rect.top + "px";
+    entry.box.style.width = rect.width + "px";
+    entry.box.style.height = rect.height + "px";
+    entry.box.style.borderColor = colour;
+    entry.label.style.background = colour;
     // Above the element for an ordinary one; below it when the element is at the top edge, where a
     // label above would fall off the viewport.
-    label.style.top = rect.top < 20 ? "100%" : "-18px";
-    label.textContent = described(el);
+    entry.label.style.top = rect.top < 20 ? "100%" : "-18px";
+    entry.label.textContent = described(el);
   };
 
-  const hide = (): void => {
-    box.style.display = "none";
+  const hide = (entry: { box: HTMLElement }): void => {
+    entry.box.style.display = "none";
+  };
+
+  const hoverBox = makeBox();
+  /** One box per pick, grown and shrunk with the list rather than recreated on every repaint. */
+  const pickBoxes: { box: HTMLElement; label: HTMLElement }[] = [];
+
+  /**
+   * Draw what is picked: one green box per element, in the panel's order.
+   *
+   * An element that has left the document (a re-render, an HMR update) simply loses its box until the
+   * panel says otherwise — the box is a claim about a node, and a node that is gone has nothing to
+   * claim about. Nothing is dropped from `state.picked` here: the list is the panel's.
+   */
+  const paintPicked = (): void => {
+    while (pickBoxes.length < state.picked.length) {
+      const entry = makeBox();
+      pickBoxes.push(entry);
+      mount(entry);
+    }
+    while (pickBoxes.length > state.picked.length) {
+      const extra = pickBoxes.pop();
+      if (extra !== undefined && extra.box.parentNode !== null) {
+        extra.box.parentNode.removeChild(extra.box);
+      }
+    }
+    for (let i = 0; i < pickBoxes.length; i += 1) {
+      const entry = pickBoxes[i];
+      const el = state.picked[i];
+      if (entry === undefined) continue;
+      if (el === undefined || !el.isConnected) hide(entry);
+      else place(entry, el, true);
+    }
+  };
+
+  /**
+   * What is on screen after any change: the picks, then the hover box **only** when it is still the
+   * user's to move — nothing is picked (L1's single selection is not locked yet), or multi-select is
+   * on, where the next click is the whole point.
+   */
+  const refreshPaint = (): void => {
+    if (!state.active) {
+      hide(hoverBox);
+      for (let i = 0; i < pickBoxes.length; i += 1) {
+        const entry = pickBoxes[i];
+        if (entry !== undefined) hide(entry);
+      }
+      return;
+    }
+    paintPicked();
+    const hovering = state.hovered;
+    if ((state.picked.length === 0 || state.multi) && hovering !== null && hovering.isConnected) {
+      mount(hoverBox);
+      place(hoverBox, hovering, false);
+    } else {
+      hide(hoverBox);
+    }
   };
 
   const project = (): void => {
@@ -456,12 +544,15 @@ function installWorkbenchPicker(channel: string, sniffOrigin: (el: Element) => u
     frame = requestAnimationFrame(() => {
       frame = 0;
       if (!state.active) return;
+      // A single locked selection stops the highlight following the cursor — that is L1's click, and
+      // in multi-select the very next click is what the user is aiming at, so hover keeps following.
+      if (state.picked.length > 0 && !state.multi) return;
       const under = at(lastX, lastY);
       const el = under.el;
-      if (state.selected !== null) return;
       if (el === null || el === state.hovered) return;
       state.hovered = el;
-      paint(el, false);
+      mount(hoverBox);
+      place(hoverBox, el, false);
       send({
         kind: "hover",
         target: facts(el, false, contextOf(el, under.deep)),
@@ -487,15 +578,20 @@ function installWorkbenchPicker(channel: string, sniffOrigin: (el: Element) => u
     swallow(event);
   };
 
+  /**
+   * A click while picking: report the element and swallow the click.
+   *
+   * The page no longer decides what a click *means* (L2.1-a): add, replace or toggle off is the panel's
+   * rule, and it answers with `setPicked`, which is also what repaints the boxes. Deciding here as well
+   * would be a second copy of that rule, and the two would drift the first time it changed.
+   */
   const onClick = (event: MouseEvent): void => {
     if (!state.active) return;
     swallow(event);
     const under = at(event.clientX, event.clientY);
     const el = under.el;
     if (el === null) return;
-    state.selected = el;
     state.hovered = el;
-    paint(el, true);
     send({
       kind: "selected",
       target: facts(el, true, contextOf(el, under.deep)),
@@ -505,18 +601,19 @@ function installWorkbenchPicker(channel: string, sniffOrigin: (el: Element) => u
 
   const onScroll = (): void => {
     if (!state.active) return;
-    if (state.selected !== null) paint(state.selected, true);
-    else project();
+    // Every box is in viewport coordinates, so scrolling moves all of them: the picks to their
+    // elements (or off screen), and the hover highlight to whatever the cursor has come to rest on.
+    refreshPaint();
+    if (state.picked.length === 0 || state.multi) project();
   };
 
   const onKey = (event: KeyboardEvent): void => {
     if (!state.active) return;
     if (event.key !== "Escape" && event.key !== "Esc") return;
-    if (state.selected !== null) {
-      state.selected = null;
+    if (state.picked.length > 0) {
+      state.picked = [];
       send({ kind: "cleared" });
-      if (state.hovered !== null) paint(state.hovered, false);
-      else hide();
+      refreshPaint();
       return;
     }
     pause();
@@ -550,23 +647,24 @@ function installWorkbenchPicker(channel: string, sniffOrigin: (el: Element) => u
   };
 
   const start = (): boolean => {
-    if (box.parentNode === null) document.documentElement.appendChild(box);
     state.active = true;
     addListeners();
-    if (state.selected !== null) paint(state.selected, true);
+    // The boxes are put back from the list the panel holds, not from a page-local memory: coming back
+    // from `暂离` re-locks the same elements, and the panel stays the one owner of what is picked.
+    refreshPaint();
     send({ kind: "active" });
     return true;
   };
 
   /**
-   * Stand down: no listeners, no highlight, the page is the user's again. Deliberately keeps
-   * `selected`, so coming back from `暂离` re-locks the highlight on the same element — the user paused
+   * Stand down: no listeners, no highlight, the page is the user's again. Deliberately keeps the picks
+   * (and the hovered element), so coming back from `暂离` re-locks the same elements — the user paused
    * to reach something, not to lose what they had.
    */
   const pause = (): boolean => {
     state.active = false;
     removeListeners();
-    hide();
+    refreshPaint();
     send({ kind: "paused" });
     return true;
   };
@@ -574,9 +672,17 @@ function installWorkbenchPicker(channel: string, sniffOrigin: (el: Element) => u
   const teardown = (): void => {
     state.active = false;
     state.hovered = null;
-    state.selected = null;
+    state.picked = [];
     removeListeners();
-    if (box.parentNode !== null) box.parentNode.removeChild(box);
+    // Every box this picker made goes with it — one document is left exactly as it was found.
+    hide(hoverBox);
+    if (hoverBox.box.parentNode !== null) hoverBox.box.parentNode.removeChild(hoverBox.box);
+    while (pickBoxes.length > 0) {
+      const entry = pickBoxes.pop();
+      if (entry !== undefined && entry.box.parentNode !== null) {
+        entry.box.parentNode.removeChild(entry.box);
+      }
+    }
     delete (window as unknown as Record<string, unknown>)[key];
   };
 
@@ -588,11 +694,45 @@ function installWorkbenchPicker(channel: string, sniffOrigin: (el: Element) => u
       send({ kind: "stopped" });
       return true;
     },
-    /** Re-read the selected element — the host asks for this when it needs the facts again (FR-06). */
+    /**
+     * The panel's pick list, put into the page (L2.1-a): the green boxes are drawn from this and from
+     * nothing else, so the screen cannot show a selection the panel has already dropped. Selectors are
+     * the picks' own DOM paths — the same ones a payload carries — and one the page can no longer
+     * resolve is simply not drawn.
+     */
+    setPicked: function (selectors: unknown): boolean {
+      const list: Element[] = [];
+      if (Object.prototype.toString.call(selectors) === "[object Array]") {
+        const wanted = selectors as unknown[];
+        for (let i = 0; i < wanted.length; i += 1) {
+          const selector = wanted[i];
+          if (typeof selector !== "string" || selector === "") continue;
+          let el: Element | null = null;
+          try {
+            el = document.querySelector(selector);
+          } catch (error) {
+            // A path the page can no longer parse: no box for it, and no guess at what it meant.
+            el = null;
+          }
+          if (el !== null) list.push(el);
+        }
+      }
+      state.picked = list;
+      refreshPaint();
+      return true;
+    },
+    /** Multi-select as the panel has it: hover keeps following the cursor while it is on. */
+    setMulti: function (on: unknown): boolean {
+      state.multi = on === true;
+      refreshPaint();
+      return true;
+    },
+    /** Re-read the picked element — the host asks for this when it needs the facts again (FR-06). */
     refacts: function (): unknown {
-      if (state.selected === null || !state.selected.isConnected) return null;
+      const el = state.picked.length === 0 ? null : state.picked[state.picked.length - 1];
+      if (el === null || el === undefined || !el.isConnected) return null;
       return {
-        target: facts(state.selected, true, contextOfElement(state.selected)),
+        target: facts(el, true, contextOfElement(el)),
         page: pageFacts(),
       };
     },
@@ -627,7 +767,7 @@ function installWorkbenchPicker(channel: string, sniffOrigin: (el: Element) => u
       return { target: facts(el, true, contextOfElement(el)), page: pageFacts() };
     },
     status: function (): unknown {
-      return { active: state.active, selected: state.selected !== null };
+      return { active: state.active, multi: state.multi, picked: state.picked.length };
     },
     teardown: teardown,
   };
@@ -653,6 +793,25 @@ export function pickerCommand(mode: "picking" | "off" | "paused"): string {
 /** Ask the page's picker to re-read the element it has selected — null once that element is gone. */
 export function pickerRefacts(): string {
   return `window.${PICKER_KEY} ? window.${PICKER_KEY}.refacts() : null`;
+}
+
+/**
+ * Put the panel's pick list into the page (L2.1-a). The selectors are the picks' own DOM paths, so the
+ * page needs nothing else to find them again; the boxes it draws are the panel's list and not a copy
+ * of it, which is what keeps the count in the panel and the highlights on the page in step.
+ */
+export function pickerSetPicked(selectors: readonly string[]): string {
+  return `window.${PICKER_KEY} ? (window.${PICKER_KEY}.setPicked(${JSON.stringify(selectors)}) && "ok") || "error" : "missing"`;
+}
+
+/**
+ * Multi-select on or off in the page. The panel owns the state; the page needs it because it decides
+ * whether the hover highlight keeps following the cursor — with one locked element (L1's single
+ * selection) it must not, and with multi-select on it must.
+ */
+export function pickerMulti(on: boolean): string {
+  const flag = on ? "true" : "false";
+  return `window.${PICKER_KEY} ? (window.${PICKER_KEY}.setMulti(${flag}) && "ok") || "error" : "missing"`;
 }
 
 /**

@@ -564,6 +564,13 @@ export interface ComposerReference {
    * re-pick or drop the chip.
    */
   stale?: boolean;
+  /**
+   * How many of a **batch** chip's elements the page no longer had at send time (L2.1-d). The message
+   * still went — with the surviving elements — so this is deliberately not `stale`: nothing is being
+   * held. It is here because the user has to be told that the message they just sent carries fewer
+   * elements than the chip promised, and the chip is where they were looking.
+   */
+  dropped?: number;
 }
 
 /**

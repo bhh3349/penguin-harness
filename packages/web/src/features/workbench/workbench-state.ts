@@ -159,10 +159,25 @@ export interface PickState {
   paused: boolean;
   /** Whether a picker is installed in the guest on screen right now. */
   live: boolean;
+  /**
+   * Whether a click **adds** to the selection or replaces it (L2.1-a).
+   *
+   * The default is off, and that is the point: multi-select is a state *inside* pick mode, not a new
+   * mode — L1's one-click-one-element behaviour is what the panel still opens with, and a user who
+   * never touches this switch never meets the batch: accumulation is only what the user asked for
+   * while this is on.
+   */
+  multi: boolean;
   /** The element under the cursor, for the panel's "candidate" line. */
   hovered: ElementFacts | null;
-  /** The element the last click locked onto. Outlives a pause on purpose: `暂离` is not "forget". */
-  selected: ElementFacts | null;
+  /**
+   * What the user has picked, in the order they picked it. One element at most while `multi` is off,
+   * which is exactly L1's single selection; several while it is on (L2.1-a).
+   *
+   * Outlives a pause on purpose: `暂离` is not "forget". It does *not* outlive the document — a new
+   * page is a new set of elements, and every pick in the old one is about a node that is gone.
+   */
+  picked: ElementFacts[];
   /**
    * Where the last picked element was found — the page's URL and viewport, read in the page at pick
    * time rather than reconstructed from the address box afterwards (a route change inside the page
@@ -184,10 +199,53 @@ export const NO_PICK: PickState = {
   wanted: true,
   paused: false,
   live: false,
+  multi: false,
   hovered: null,
-  selected: null,
+  picked: [],
   page: null,
 };
+
+/**
+ * The element the panel's card is about: the last one picked.
+ *
+ * Everything L1 did with "the selection" — the source resolution, the payload card, the §9.4 bounds,
+ * the "已选中" line — still reads this one element, because a batch is shown as a batch (a count and
+ * a list) and inspected one element at a time. With one pick it is that pick, so the single-selection
+ * panel is byte-for-byte the L1 panel.
+ */
+export function currentPick(state: PickState): ElementFacts | null {
+  return state.picked.length === 0 ? null : (state.picked[state.picked.length - 1] ?? null);
+}
+
+/**
+ * Whether two picks are the same element.
+ *
+ * The selector is the identity here, and that is sound rather than convenient: the picker builds a DOM
+ * path with `:nth-of-type` wherever siblings would make it ambiguous, so within one document a path
+ * names exactly one node. Two picks can only be about the same document — a navigation drops them all
+ * (`reducePick`, `installed`) — so comparing paths is comparing elements.
+ */
+export function samePick(a: ElementFacts, b: ElementFacts): boolean {
+  return a.cssSelector === b.cssSelector;
+}
+
+/**
+ * A click in multi mode: add the element, or — when it is already picked — take it back out.
+ *
+ * Clicking a picked element again is how a multi-select undoes one without reaching for the panel,
+ * and it is the only reading of a second click that does not quietly produce a duplicate. The order of
+ * the rest is untouched, because the order is the user's.
+ */
+export function togglePick(picked: readonly ElementFacts[], target: ElementFacts): ElementFacts[] {
+  return picked.some((entry) => samePick(entry, target))
+    ? picked.filter((entry) => !samePick(entry, target))
+    : [...picked, target];
+}
+
+/** Drop one pick by the identity above — the panel's per-element × (L2.1-a: 单个可取消). */
+export function removePick(picked: readonly ElementFacts[], cssSelector: string): ElementFacts[] {
+  return picked.filter((entry) => entry.cssSelector !== cssSelector);
+}
 
 /**
  * Which selection a resolution belongs to — the name the panel tags an answer with.
@@ -207,27 +265,26 @@ export function selectionIdentity(pageUrl: string, cssSelector: string): string 
   return `${pageUrl}\u0000${cssSelector}`;
 }
 
-/** A resolved source, tagged with the selection it was resolved for. */
-export interface ResolvedSource<S> {
-  /** A `selectionIdentity` — what the source half is only true of. */
-  identity: string;
-  source: S;
-}
+/**
+ * The resolutions the panel is holding, by the selection identity each one answers for.
+ *
+ * A map rather than one slot, because a batch has several elements resolving at once (L2.1) — and the
+ * *key* is what keeps the promise the single slot was introduced for: a location can only ever be read
+ * back under the identity it was resolved for (M5.1, `实测脚本/m54-卡片归属/`).
+ */
+export type ResolvedSources<S> = ReadonlyMap<string, S>;
 
 /**
- * The source to show for `identity`: the resolution tagged with it, or nothing.
+ * The source to show for `identity`: the resolution stored under it, or nothing.
  *
  * "Nothing" is the honest answer in both of the cases this refuses — a resolution that belongs to
  * another selection (the panel's state is one step behind the pick), and no selection at all. The
  * caller reads the null as `pending` and says so, rather than showing a location that is not this
  * element's.
  */
-export function sourceFor<S>(
-  resolved: ResolvedSource<S> | null,
-  identity: string | null,
-): S | null {
-  if (resolved === null || identity === null) return null;
-  return resolved.identity === identity ? resolved.source : null;
+export function sourceFor<S>(resolved: ResolvedSources<S>, identity: string | null): S | null {
+  if (identity === null) return null;
+  return resolved.get(identity) ?? null;
 }
 
 export type PickEvent =
@@ -237,12 +294,16 @@ export type PickEvent =
   | { kind: "guest-gone" }
   /** The panel's own switch. */
   | { kind: "toggle" }
+  /** In or out of multi-select (L2.1-a); the picks themselves are handled below, not lost here. */
+  | { kind: "multi-toggle" }
   | { kind: "pause" }
   | { kind: "resume" }
   /** Esc, pressed in the panel or in the page — both arrive here and mean the same. */
   | { kind: "escape" }
   | { kind: "hover"; target: ElementFacts; page: PageFacts }
   | { kind: "selected"; target: ElementFacts; page: PageFacts }
+  /** One pick taken out of the batch, by selector (the panel's ×, or a second click in the page). */
+  | { kind: "unpick"; cssSelector: string }
   /** The page's own picker dropped the selection (Esc in the page). */
   | { kind: "cleared" }
   /** The page's own picker left pick mode (a second Esc in the page). */
@@ -254,35 +315,50 @@ export type PickEvent =
  * `escape` is two-step, and the step is the whole rule: with something selected it clears the
  * selection and stays in pick mode, with nothing selected it leaves pick mode. Clearing a selection
  * that was never made is what would make Esc feel like it did nothing; leaving pick mode while an
- * element is held is what would make it feel like it threw work away.
+ * element is held is what would make it feel like it threw work away. With several picks, one Esc
+ * clears them all — the step is "something held vs nothing held", not a count.
+ *
+ * A click means two different things and the mode is what says which (L2.1-a): with multi off it
+ * replaces the selection, with it on it toggles one element in or out of the batch. Switching multi
+ * *off* keeps the last pick and drops the rest, so leaving the mode lands on a valid single selection
+ * rather than a batch the single-selection UI would then show only part of.
  */
 export function reducePick(state: PickState, event: PickEvent): PickState {
   switch (event.kind) {
     case "installed":
       // The switch is deliberately not reset here: a reload or a new address must not turn picking
       // back on behind a user who switched it off. The page facts *are* dropped: this is a new
-      // document, and the old page's URL would be the one thing a payload must never carry.
-      return { ...state, live: true, paused: false, hovered: null, selected: null, page: null };
+      // document, and the old page's URL would be the one thing a payload must never carry. The
+      // picks go with it — every one of them names a node of the document that just went away.
+      return { ...state, live: true, paused: false, hovered: null, picked: [], page: null };
     case "guest-gone":
-      return { ...NO_PICK, wanted: state.wanted };
+      return { ...NO_PICK, wanted: state.wanted, multi: state.multi };
     case "toggle":
       return { ...state, wanted: !state.wanted, paused: false };
+    case "multi-toggle":
+      return state.multi
+        ? { ...state, multi: false, picked: state.picked.slice(-1) }
+        : { ...state, multi: true };
     case "pause":
       return { ...state, paused: true };
     case "resume":
       return { ...state, paused: false };
     case "escape":
-      if (state.selected !== null) return { ...state, selected: null };
+      if (state.picked.length > 0) return { ...state, picked: [] };
       return { ...state, wanted: false, paused: false };
     case "exited":
       return { ...state, wanted: false, paused: false, hovered: null };
     case "cleared":
       // The selection goes; the page it was found on stays, because the page has not changed.
-      return { ...state, selected: null };
+      return { ...state, picked: [] };
+    case "unpick":
+      return { ...state, picked: removePick(state.picked, event.cssSelector) };
     case "hover":
       return { ...state, hovered: event.target, page: event.page };
     case "selected":
-      return { ...state, selected: event.target, page: event.page };
+      return state.multi
+        ? { ...state, picked: togglePick(state.picked, event.target), page: event.page }
+        : { ...state, picked: [event.target], page: event.page };
   }
 }
 
