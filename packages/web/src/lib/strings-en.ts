@@ -2625,7 +2625,10 @@ Scenarios:
     badAddress: "That is not an address that can be opened — use http://host:port",
     loading: "Loading…",
     connected: "Connected",
-    tierPrecise: "the page carries a source map: pick an element to see whether it reaches a line",
+    /** The state dot's sentence while the panel is pointed at nothing (L2.2b) — see the zh dictionary. */
+    notConnected: "Not connected",
+    tierPrecise:
+      "the page carries a source map: pick an element to find out whether it reaches a line (the location goes out with the message)",
     tierDegraded:
       "degraded only: no source map can be read on this page, so a picked element cannot name its source line",
     tierOpaque: "the page refuses to be read cross-origin, so the tier cannot be judged",
@@ -2652,7 +2655,7 @@ Scenarios:
           ambiguous:
             "Under “ambiguous”, the location given may be the element wrapping it (several sibling nodes share that one place in the source)",
           channel:
-            "Picks come back through the previewed page's own console: a page could in principle forge one, so the payload is shown to you first and only leaves when you click “Add to conversation”; closing that completely would mean touching the app's security boundary, which L1 does not do",
+            "Picks come back through the previewed page's own console: a page could in principle forge one, so only what you click “Add to conversation” gets into a message; the panel no longer lays the payload out for you to read first (D33), so nothing but your own click stands in for it; closing that completely would mean touching the app's security boundary, which L1 does not do",
         },
       },
     },
@@ -2671,29 +2674,26 @@ Scenarios:
     desktopOnly: "The UI workbench needs the desktop app",
     desktopOnlyDetail:
       "The preview embeds the dev server you are running and reads elements out of its page, which only the desktop shell (pnpm desktop) can do. The app opened in a browser tab gets the other panels.",
-    pickStart: "Start picking",
-    pickStop: "Stop picking",
-    pickPause: "Stand down",
-    pickResume: "Pick again",
+    pickTitle: "Select an element",
+    /** 清除 (L2.2b/D33) — see the zh dictionary for why it stands where 暂离 used to. */
+    clearPicks: "Clear the picked elements",
     /** Multi-select (L2.1-a) — see the zh dictionary for why the copy names both gestures. */
     multiStart: "Pick several",
-    multiStop: "Leave multi-select",
     multiCount: (count: number) => `${count} selected`,
     multiRemove: (name: string) => `Drop ${name} from the selection`,
     /** The chip a whole batch wears in the composer: one chip, one message (L2.1-b). */
     batchChip: (count: number, files: number) => `${count} elements / ${files} files`,
     candidate: "Candidate",
-    picked: "Selected",
     pickHint:
-      "Hover to highlight, click to select — that click never reaches the page. Esc clears the selection, and a second Esc leaves pick mode. For something you cannot reach yet, Stand down hands the page back to you; Pick again resumes.",
+      "Hover to highlight, click to select — that click never reaches the page. Esc clears the selection, and a second Esc leaves pick mode. For something you cannot reach yet, press the arrow at the right of the address bar to leave pick mode, work the page into that state, and press it again to keep going.",
     multiHint:
-      "Multi-select is on: each click adds an element to the batch, and clicking one again takes it out. Add to conversation puts the whole batch into one message — several edits in one file, or several files at once.",
-    pausedHint:
-      "Standing down: the page is entirely yours — open dropdowns, modals and hover layers, then Pick again to keep going (L1 will not open them for you).",
-    pickOffHint: "Picking is off: the page behaves exactly as it normally does.",
-    pickedNext: "The payload is assembled above; Add to conversation stages it in the composer.",
+      "Multi-select is on: each click adds an element to the batch, and clicking one again takes it out. Add to conversation puts the whole batch into one message — several edits in one file, or several files at once — and Clear the picked elements empties the batch in one go.",
+    pickOffHint:
+      "Picking is off: the page is entirely yours. Press Select an element in the address bar to start.",
+    pickedNext:
+      "Add to conversation stages this element in the composer; the payload goes out with that message.",
     pickedNextBatch: (count: number) =>
-      `This batch (${count} elements) is assembled above; Add to conversation stages them in one message.`,
+      `Add to conversation stages this batch (${count} elements) as one message; the payload goes out with it.`,
     addToChat: "Add to conversation",
     /** One element a send-time re-resolution could not find (AC-8), and which way it went. */
     goneElement: (label: string, reason: "missing" | "replaced" | "page-changed") =>
@@ -2744,32 +2744,12 @@ Scenarios:
       "zero-size": "The element you picked measures 0×0: it has no visible area on the page.",
     },
     notVisibleDetail:
-      "Use Stand down to get the page into a state where it shows (open the dropdown, open the modal), then Pick again and select it — L1 will not open it for you.",
+      "Press the arrow at the right of the address bar to leave pick mode, get the page into a state where it shows (open the dropdown, open the modal), then press it again and pick it — L1 will not open it for you.",
     /** The page embeds frames; said while picking, before the user hunts for what is inside one. */
     framesInPage: (count: number) =>
       `This page embeds ${count} iframe(s): L1 does not enter frames, so nothing inside them can be picked.`,
-    payload: {
-      title: "Payload (§6 v1)",
-      batchTitle: (count: number, files: number) =>
-        `Payload (§6 v2 · ${count} elements / ${files} files)`,
-      refId: "refId",
-      selector: "Selector",
-      tag: "Tag",
-      role: "Role",
-      name: "Name",
-      text: "Text",
-      testId: "testId",
-      rect: "Box",
-      parentChain: "Ancestors",
-      classes: "Classes",
-      elements: "Elements",
-      project: "Project",
-      page: "Page",
-      source: "Source",
-      json: "Payload JSON (v1)",
-      jsonBatch: "Payload JSON (v2)",
-    },
-    /** The batch's line in the message (L2.1-c) — same grouping as the payload's `elements` order. */
+    /**
+     * The batch's line in the message (L2.1-c) — same grouping as the payload's `elements` order. */
     batchLead: (count: number, files: number) =>
       `Picked UI elements (${count}, from ${files} files, same file together):`,
     batchLine: (file: string, items: string) => `· ${file} — ${items}`,

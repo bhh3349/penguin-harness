@@ -146,17 +146,28 @@ export function reduceGuest(state: GuestState, signal: GuestSignal): GuestState 
  * The picker's state as the panel shows it, and the events that move it — including the ones the
  * guest sends back about itself.
  *
- * It is three facts rather than one mode, because they answer different questions and only one of
- * them survives a page load: the switch is the user's (`wanted`, remembered across pages so that a
- * reload does not undo it), `暂离` is a moment (`paused`), and `live` says whether there is a picker
- * in the page at all. Collapsing them into a single mode is how a switch gets silently turned back on
- * by the next navigation.
+ * It is two facts rather than one mode, because they answer different questions and only one of them
+ * survives a page load: the switch is the user's (`wanted`, remembered across pages so that a reload
+ * does not undo it), and `live` says whether there is a picker in the page at all. Collapsing them
+ * into a single mode is how a switch gets silently turned back on by the next navigation.
+ *
+ * `暂离` was a third fact — a moment of "the page is yours" — and is gone (L2.2b). It had exactly two
+ * effects: the page stopped intercepting clicks, and the picks survived. The address bar's arrow does
+ * both (`toggle` only flips `wanted`; `picked` is untouched), so a second control for it said one
+ * thing twice — and the arrow is what this feature's own switch is.
  */
 export interface PickState {
-  /** The panel's switch. On by default: picking is what the panel is for. */
+  /**
+   * The panel's switch — **off until the user asks for it** (L2.2b).
+   *
+   * It used to default to on, reading "picking is what the panel is for". The panel is a browser
+   * first (FR-01): a page you just pointed it at has to behave like a page, and a preview that
+   * silently swallows the user's first click is exactly the surprise a pick *button* exists to
+   * remove. This is the affordance it now copies — the DevTools arrow: press it, then inspect.
+   * PRD FR-02 said 默认开; that line moves with the panel (PRD v1.2, D33). Still remembered across
+   * pages, though: once on, neither a reload nor a navigation turns it back off.
+   */
   wanted: boolean;
-  /** `暂离` — the page is the user's until they come back from it. */
-  paused: boolean;
   /** Whether a picker is installed in the guest on screen right now. */
   live: boolean;
   /**
@@ -174,8 +185,9 @@ export interface PickState {
    * What the user has picked, in the order they picked it. One element at most while `multi` is off,
    * which is exactly L1's single selection; several while it is on (L2.1-a).
    *
-   * Outlives a pause on purpose: `暂离` is not "forget". It does *not* outlive the document — a new
-   * page is a new set of elements, and every pick in the old one is about a node that is gone.
+   * It does *not* outlive the document — a new page is a new set of elements, and every pick in the
+   * old one is about a node that is gone. Neither does switching the picker off touch it: the arrow
+   * is a switch, not a "forget" (L2.2b).
    */
   picked: ElementFacts[];
   /**
@@ -187,17 +199,15 @@ export interface PickState {
   page: PageFacts | null;
 }
 
-export type PickMode = "off" | "picking" | "paused";
+export type PickMode = "off" | "picking";
 
-/** What the picker in the page should be doing, given all three facts. */
+/** What the picker in the page should be doing, given both facts. */
 export function pickMode(state: PickState): PickMode {
-  if (!state.live || !state.wanted) return "off";
-  return state.paused ? "paused" : "picking";
+  return state.live && state.wanted ? "picking" : "off";
 }
 
 export const NO_PICK: PickState = {
-  wanted: true,
-  paused: false,
+  wanted: false,
   live: false,
   multi: false,
   hovered: null,
@@ -296,8 +306,6 @@ export type PickEvent =
   | { kind: "toggle" }
   /** In or out of multi-select (L2.1-a); the picks themselves are handled below, not lost here. */
   | { kind: "multi-toggle" }
-  | { kind: "pause" }
-  | { kind: "resume" }
   /** Esc, pressed in the panel or in the page — both arrive here and mean the same. */
   | { kind: "escape" }
   | { kind: "hover"; target: ElementFacts; page: PageFacts }
@@ -330,24 +338,22 @@ export function reducePick(state: PickState, event: PickEvent): PickState {
       // back on behind a user who switched it off. The page facts *are* dropped: this is a new
       // document, and the old page's URL would be the one thing a payload must never carry. The
       // picks go with it — every one of them names a node of the document that just went away.
-      return { ...state, live: true, paused: false, hovered: null, picked: [], page: null };
+      return { ...state, live: true, hovered: null, picked: [], page: null };
     case "guest-gone":
       return { ...NO_PICK, wanted: state.wanted, multi: state.multi };
     case "toggle":
-      return { ...state, wanted: !state.wanted, paused: false };
+      // The feature's only switch, and the reason `暂离` could go (L2.2b): off hands the page back to
+      // the user without touching `picked`, so off-then-on is "stand down" and "pick again" as well.
+      return { ...state, wanted: !state.wanted };
     case "multi-toggle":
       return state.multi
         ? { ...state, multi: false, picked: state.picked.slice(-1) }
         : { ...state, multi: true };
-    case "pause":
-      return { ...state, paused: true };
-    case "resume":
-      return { ...state, paused: false };
     case "escape":
       if (state.picked.length > 0) return { ...state, picked: [] };
-      return { ...state, wanted: false, paused: false };
+      return { ...state, wanted: false };
     case "exited":
-      return { ...state, wanted: false, paused: false, hovered: null };
+      return { ...state, wanted: false, hovered: null };
     case "cleared":
       // The selection goes; the page it was found on stays, because the page has not changed.
       return { ...state, picked: [] };

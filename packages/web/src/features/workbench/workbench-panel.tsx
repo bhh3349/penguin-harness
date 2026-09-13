@@ -10,37 +10,50 @@
  * carries neither the source maps nor the positions this feature locates elements with, and a
  * browser tab has no guest element to read a page through.
  *
- * What is here now is the address, the guest, the picker and the payload: the address row remembers
- * where you pointed it, the probe offers the dev servers it found instead of making you guess a
- * port, the status line names what went wrong in the terms that suggest the next move (nothing on
- * the port, a timeout, a page that will not be read) instead of calling every failure a connection
- * error, picking highlights what is under the cursor inside the user's page, locks the highlight on
- * a click while that click is stopped from reaching the page, and stands down on `暂离` for the
- * elements that are only reachable by using the page first.
+ * What is here now is the address, the guest and the picker: the address row remembers where you
+ * pointed it, the probe offers the dev servers it found instead of making you guess a port, a dot
+ * where a browser keeps its padlock and a line under the row name what went wrong in the terms that
+ * suggest the next move (nothing on the port, a timeout, a page that will not be read) instead of
+ * calling every failure a connection error, and the arrow at the end of the row is the switch for
+ * element selection, exactly as it is in DevTools: press it and the page highlights what is under
+ * the cursor and locks it on a click while that click is stopped from reaching the page; press it
+ * again and the page is the user's again, with the picks still in hand.
  *
  * A picked element becomes the frozen v1 payload (§6) right here: `element-payload.ts` assembles it
  * from the element's facts, the page it was found on, and the Session's workspace — which is the
  * project being previewed, and the only thing that makes a relative source path unambiguous. The
- * panel shows that payload back, field by field and then as JSON, because the whole promise of this
- * feature is that the user can see exactly what the Agent is about to be told, and `加入对话` stages
- * it in the composer: a chip naming the element, and the payload itself in the message when it is
- * sent. The source half is resolved from the page's own framework evidence (`source-resolution.ts`),
- * and when it cannot be, the card says which of the four tiers it landed in and why
- * (`source-tier.ts`) instead of only saying that it has nothing — a page with no readable source map
- * is a documented limit of this feature (PRD FR-07), not a bug in it.
+ * panel no longer draws that payload back (L2.2b): the card that listed it field by field, and then
+ * as JSON, is gone, and with it the last place a person could read what the Agent is about to be
+ * told *before* sending — the payload still travels, on `加入对话`, into the composer's chip and the
+ * message that chip is sent in. The source half is resolved from the page's own framework evidence
+ * (`source-resolution.ts`), and when it cannot be, the four tiers it can land in are still listed
+ * under the support fold (`source-tier.ts`) instead of only saying that it has nothing — a page with
+ * no readable source map is a documented limit of this feature (PRD FR-07), not a bug in it.
  *
  * Several elements can be picked in one go (L2.1): multi-select is a *state inside pick mode* that
- * accumulates clicks and can drop them one by one, the card then shows one file group per row, and
- * `加入对话` stages **one** chip carrying a v2 payload — one `page`, one `elements` array, ordered by
- * file — so a batch is one message rather than three. One element is still v1, unchanged: the shape
- * follows the count, so the message an Agent already knows how to read is not re-shaped for the user
- * who picked a single element.
+ * accumulates clicks and can drop them one by one, 多选 marks it, 清除 empties the whole batch at
+ * once, and `加入对话` stages **one** chip carrying a v2 payload — one `page`, one `elements` array,
+ * ordered by file — so a batch is one message rather than three. One element is still v1, unchanged:
+ * the shape follows the count, so the message an Agent already knows how to read is not re-shaped for
+ * the user who picked a single element.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { S } from "../../lib/strings";
 import { Button } from "../../components/ui/button";
+import { GlyphIcon } from "../../components/ui/glyph-icon";
+import {
+  ADD_TO_CHAT_ICON,
+  CLEAR_ICON,
+  ELEMENT_PICKER_ICON,
+  ENTER_ICON,
+  MULTI_PICK_ICON,
+  REFRESH_ICON,
+} from "../../components/ui/icons";
 import { Input } from "../../components/ui/input";
-import { toneStrip } from "../../lib/tone";
+import { Tooltip } from "../../components/ui/tooltip";
+import { ICON_SIZE } from "../../lib/icon-scale";
+import { toneDot, toneStrip } from "../../lib/tone";
+import type { Tone } from "../../lib/tone";
 import type { ComposerReference } from "../../lib/workspace-tree";
 import { inspectPage, probeCandidatePorts } from "./dev-server-probe";
 import type { PageInspection, PortProbe } from "./dev-server-probe";
@@ -83,7 +96,6 @@ import type {
 import { batchDecision, registerElementSource } from "./element-references";
 import type { ElementGoneReason, ElementRefresh } from "./element-references";
 import { createModuleReader, resolveSource } from "./source-resolution";
-import { explainSourceGap, sourceRowText } from "./source-tier";
 import type { SourceGapReason } from "./source-tier";
 import {
   ADDRESS_KEY,
@@ -158,76 +170,6 @@ function originOf(url: string): string {
 function probeSuffix(probe: PortProbe): string {
   if (probe.kind === "vite") return "Vite";
   return probe.kind === "page" ? S.workbench.probeWeb : S.workbench.probeOpaque;
-}
-
-/** The payload as the card reads it: one line per fact, in the order a person checks them. */
-function payloadRows(
-  payload: ElementPayload,
-  sourceValue: string,
-): { label: string; value: string }[] {
-  const t = S.workbench.payload;
-  const rows = [
-    { label: t.refId, value: payload.target.refId },
-    { label: t.selector, value: payload.target.cssSelector },
-    { label: t.tag, value: payload.target.tagName },
-    { label: t.role, value: payload.target.role ?? "—" },
-    { label: t.name, value: payload.target.name ?? "—" },
-    { label: t.text, value: payload.target.text === "" ? "—" : payload.target.text },
-  ];
-  if (payload.target.testId !== null) rows.push({ label: t.testId, value: payload.target.testId });
-  rows.push(
-    {
-      label: t.rect,
-      value: `${payload.target.rect.x},${payload.target.rect.y} · ${payload.target.rect.w}×${payload.target.rect.h}`,
-    },
-    {
-      label: t.parentChain,
-      value: payload.target.parentChain.length === 0 ? "—" : payload.target.parentChain.join(" ← "),
-    },
-    {
-      label: t.classes,
-      value: payload.style.classes.length === 0 ? "—" : payload.style.classes.join(" "),
-    },
-    { label: t.project, value: payload.page.projectRoot },
-    {
-      label: t.page,
-      value: `${payload.page.url} · ${payload.page.viewport.width}×${payload.page.viewport.height}@${payload.page.viewport.dpr}x`,
-    },
-    { label: t.source, value: sourceValue },
-  );
-  return rows;
-}
-
-/**
- * The card for a batch, by file (L2.1-c): one row per file naming the elements it holds — each with
- * the tier its location landed in, the same sentence the single-element card shows — and then the page
- * the whole batch came from. The grouping is the payload's own, so the card, the message's prose and
- * the JSON all say the same thing about which edits belong together.
- *
- * `sourceRow` is the component's per-element source sentence rather than a second copy of that logic:
- * a location must be described the same way whether one element is being looked at or three.
- */
-function batchRows(
-  inputs: readonly PayloadInput[],
-  sourceRow: (input: PayloadInput) => string,
-): { label: string; value: string }[] {
-  const t = S.workbench.payload;
-  const first = inputs[0];
-  if (first === undefined) return [];
-  const groups = groupByFile(inputs).map((group) => ({
-    label: group.file ?? S.workbench.batchNoFile,
-    value: group.members
-      .map((member) => `${elementLabel(member.target)} · ${sourceRow(member)}`)
-      .join("；"),
-  }));
-  return [
-    ...groups,
-    { label: t.project, value: first.projectRoot },
-    {
-      label: t.page,
-      value: `${first.page.url} · ${first.page.viewport.width}×${first.page.viewport.height}@${first.page.viewport.dpr}x`,
-    },
-  ];
 }
 
 /** One element a chip was staged with: what to re-read it by, and what to call it if it is gone. */
@@ -349,16 +291,11 @@ export function WorkbenchPanel({
   }, []);
 
   /**
-   * The element the card is about — the last one picked — and everything L1 read out of "the
-   * selection" still reads it: the source row, the payload rows, the §9.4 bounds, the line in the
-   * picker row. A batch is shown as a batch beside it (a count and a list), not instead of it.
+   * The element the card is about — the last one picked — and what still reads "the selection":
+   * the §9.4 bounds and the line in the picker row. A batch is shown beside it (a count and a list
+   * of chips), not instead of it.
    */
   const selected = currentPick(pick);
-  const sourceIdentity =
-    selected === null || pick.page === null
-      ? null
-      : selectionIdentity(pick.page.url, selected.cssSelector);
-  const source = sourceFor(resolvedSources, sourceIdentity);
 
   /**
    * What one element contributes to a message: its facts, the page it came from, and the source the
@@ -395,23 +332,6 @@ export function WorkbenchPanel({
     if (first === undefined) return null;
     return items.length === 1 ? buildPayload(first) : buildBatchPayload(items);
   }, [items]);
-  const batch: ElementPayloadBatch | null =
-    payload !== null && payload.schemaVersion === 2 ? payload : null;
-
-  /**
-   * What the source row says, and why. `pending` is exactly "the pick is in and the resolution has
-   * not answered yet": `source` is null from the moment a selection arrives until `resolveSource`
-   * returns, so nothing false is shown in the gap. The reason is derived from facts the panel already
-   * has — the payload's own confidence, whether the framework reported any evidence, and what the
-   * address probe read off the page — rather than from a new field in the frozen payload schema
-   * (D20: §6 is not widened for a panel sentence).
-   */
-  const sourcePending = selected !== null && source === null;
-  const sourceGap = explainSourceGap({
-    source: source ?? { confidence: "none" },
-    hasEvidence: selected?.origin != null,
-    pageSourceMap: inspection?.sourceMap ?? "unknown",
-  });
 
   /**
    * The page the picks are about, named as a value rather than as an object.
@@ -837,7 +757,7 @@ export function WorkbenchPanel({
    */
   useEffect(() => {
     void syncGuest(pickRef.current);
-  }, [pick.wanted, pick.paused, pick.multi, pick.picked, syncGuest]);
+  }, [pick.wanted, pick.multi, pick.picked, syncGuest]);
 
   /**
    * Esc in the panel itself. The page's Esc arrives over the console channel instead — whichever of
@@ -980,8 +900,8 @@ export function WorkbenchPanel({
           dispatchPick({ kind: "exited" });
           return;
         default:
-          // installed / active / paused / stopped are the picker acknowledging a command we sent; the
-          // panel already knows, and reacting again would fight the user's switch.
+          // installed / active / stopped are the picker acknowledging a command we sent; the panel
+          // already knows, and reacting again would fight the user's switch.
           return;
       }
     };
@@ -1029,19 +949,58 @@ export function WorkbenchPanel({
     );
   }
 
-  const status = (() => {
+  /**
+   * What the panel says about the page it is showing, in the two shapes a browser uses (L2.2b): a
+   * state dot beside the address, and a line only when there is something to do about it.
+   *
+   * The dot carries FR-01's four states — 未连接 / 已连接 / 不支持 / 加载失败 — without a strip of
+   * its own: the tone is what a glance reads, and the sentence (still naming the URL and this page's
+   * own tier) is the dot's accessible name and its hover text. A healthy page therefore shows **no**
+   * line at all, which is the point: the rows that used to sit under the address bar were paid for
+   * out of the preview's height, and this panel is a browser.
+   */
+  const connection = ((): { tone: Tone; sentence: string } => {
+    switch (guestState.kind) {
+      case "ready": {
+        const tier = inspection === null ? null : tierText(inspection);
+        return {
+          tone: inspection !== null && inspection.sourceMap === "present" ? "success" : "attention",
+          sentence: [S.workbench.connected, guestState.url, tier]
+            .filter((part): part is string => part !== null)
+            .join(" · "),
+        };
+      }
+      case "loading":
+        return { tone: "busy", sentence: `${S.workbench.loading} ${guestState.url}` };
+      case "unsupported-guest":
+        return { tone: "danger", sentence: S.workbench.guestUnavailable };
+      case "failed":
+        return {
+          tone: "danger",
+          sentence: failureText(guestState.failure, guestState.code, guestState.description),
+        };
+      case "idle":
+        return { tone: "muted", sentence: S.workbench.notConnected };
+    }
+  })();
+
+  /**
+   * The one line a page may still cost (L2.2b): a failure, and the two "there is no page yet" cases
+   * that have a next move to offer. A page that loaded **with** source maps says nothing — the dot's
+   * colour is the whole message. A page that loaded without them still says so, because which of the
+   * four tiers a location lands in is a documented limit of this feature (FR-07), not connection
+   * chatter, and it is the difference between a source line and none.
+   */
+  const notice = (() => {
     switch (guestState.kind) {
       case "unsupported-guest":
         return <p className={strip("danger")}>{S.workbench.guestUnavailable}</p>;
       case "loading":
-        return <p className={strip("busy")}>{S.workbench.loading}</p>;
+        return null;
       case "ready":
-        return (
-          <p className={strip("success")}>
-            {S.workbench.connected} · {guestState.url}
-            {inspection !== null && <> · {tierText(inspection)}</>}
-          </p>
-        );
+        return inspection !== null && inspection.sourceMap !== "present" ? (
+          <p className={strip("attention")}>{tierText(inspection)}</p>
+        ) : null;
       case "failed":
         return (
           <p className={strip("danger")}>
@@ -1068,26 +1027,22 @@ export function WorkbenchPanel({
   });
   const boundsHost = selected === null ? "" : describeTarget(selected);
 
-  /**
-   * The source sentence for one element of a batch — the same `sourceRowText` the single-element card
-   * uses, with the same reason derived from the same facts, so "精确 src/App.jsx:7:7" means one thing in
-   * this panel whichever card it is read on.
-   */
-  const sourceRowFor = (input: PayloadInput): string => {
-    const resolved = input.source ?? { confidence: "none" as const };
-    return sourceRowText(resolved, {
-      pending: input.source === undefined,
-      gap: explainSourceGap({
-        source: resolved,
-        hasEvidence: input.target.origin != null,
-        pageSourceMap: inspection?.sourceMap ?? "unknown",
-      }),
-    });
-  };
-
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      {/* —— The browser's own row (L2.2b) —— a state dot where a browser keeps its padlock, the
+          address, and the two things one does with a page: load it again, or start inspecting it.
+          The pick control lives *here* rather than on a row of its own because this panel is a
+          browser: the arrow beside the address is how element selection is entered, exactly as it
+          is in DevTools, and with nothing being picked there is no second row to show. */}
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-gray-200 px-3 py-2 dark:border-gray-800">
+        <Tooltip label={connection.sentence} placement="bottom" className="shrink-0">
+          <span
+            data-workbench-connection={guestState.kind}
+            role="img"
+            aria-label={connection.sentence}
+            className={`block size-2 rounded-full ${toneDot[connection.tone]}`}
+          />
+        </Tooltip>
         <Input
           size="sm"
           value={draft}
@@ -1101,135 +1056,186 @@ export function WorkbenchPanel({
             if (e.key === "Enter") load(draft);
           }}
         />
-        <Button size="sm" variant="primary" onClick={() => load(draft)}>
-          {S.workbench.load}
-        </Button>
+        {/* The address's own "go": a browser has no load button, it has the key. Same action, same
+            accessible name as the button it replaced (`载入`), so nothing that asks for it by name
+            has to know it became a mark. */}
+        <Tooltip label={S.workbench.load} placement="bottom" className="shrink-0">
+          <Button
+            size="icon"
+            variant="primary"
+            aria-label={S.workbench.load}
+            onClick={() => load(draft)}
+          >
+            <GlyphIcon d={ENTER_ICON} size={ICON_SIZE.iconButton} />
+          </Button>
+        </Tooltip>
         {target !== null && (
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => {
-              guestRef.current?.reload();
-              if (target !== null) {
-                setGuestState((state) => reduceGuest(state, { kind: "navigating", url: target }));
-              }
-            }}
-          >
-            {S.workbench.reload}
-          </Button>
-        )}
-      </div>
-
-      <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-gray-200 px-3 py-1.5 dark:border-gray-800">
-        <span className="mr-1 text-xs text-gray-400">{S.workbench.foundPorts}</span>
-        {probes === null ? (
-          <span className="text-xs text-gray-400">{S.workbench.probing}</span>
-        ) : probes.length === 0 ? (
-          <span className="text-xs text-gray-400">{S.workbench.noneFound}</span>
-        ) : (
-          probes.map((probe) => (
-            <button
-              key={probe.port}
-              type="button"
-              title={probe.title ?? probe.url}
-              onClick={() => load(probe.url)}
-              className="rounded-md border border-gray-200 px-2 py-0.5 font-mono text-xs text-gray-500 transition-colors duration-150 hover:bg-gray-100 dark:border-gray-800 dark:text-gray-400 dark:hover:bg-gray-800/60"
-            >
-              {probe.port}
-              <span className="ml-1 font-sans text-gray-400">{probeSuffix(probe)}</span>
-            </button>
-          ))
-        )}
-      </div>
-
-      {status}
-
-      {/* The picker's own row: the switch, `暂离`, and what is under the cursor. It is here rather
-          than over the page because the page belongs to the user — the overlay in there is only the
-          highlight box, which never intercepts anything. */}
-      {guestState.kind === "ready" && (
-        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-gray-200 px-3 py-1.5 dark:border-gray-800">
-          <Button
-            size="sm"
-            variant={mode === "off" ? "primary" : "ghost"}
-            onClick={() => dispatchPick({ kind: "toggle" })}
-          >
-            {mode === "off" ? S.workbench.pickStart : S.workbench.pickStop}
-          </Button>
-          {/* Multi-select (L2.1-a): a state inside pick mode, so it is offered while there is picking
-              to be in, and it says which of the two it currently is. */}
-          <Button
-            size="sm"
-            variant={pick.multi ? "primary" : "ghost"}
-            disabled={mode === "off"}
-            onClick={() => dispatchPick({ kind: "multi-toggle" })}
-          >
-            {pick.multi ? S.workbench.multiStop : S.workbench.multiStart}
-          </Button>
-          {mode === "paused" ? (
-            <Button size="sm" variant="primary" onClick={() => dispatchPick({ kind: "resume" })}>
-              {S.workbench.pickResume}
-            </Button>
-          ) : (
+          <Tooltip label={S.workbench.reload} placement="bottom" className="shrink-0">
             <Button
-              size="sm"
+              size="icon"
               variant="ghost"
-              disabled={mode === "off"}
-              onClick={() => dispatchPick({ kind: "pause" })}
+              aria-label={S.workbench.reload}
+              onClick={() => {
+                guestRef.current?.reload();
+                if (target !== null) {
+                  setGuestState((state) => reduceGuest(state, { kind: "navigating", url: target }));
+                }
+              }}
             >
-              {S.workbench.pickPause}
+              <GlyphIcon d={REFRESH_ICON} size={ICON_SIZE.iconButton} />
             </Button>
+          </Tooltip>
+        )}
+        {guestState.kind === "ready" && (
+          <Tooltip label={S.workbench.pickTitle} placement="bottom" className="shrink-0">
+            {/* One name, two states: the button does not rename itself, it *looks* pressed — the
+                same shape as the DevTools arrow it copies, and the reason `pickStart`/`pickStop`
+                are gone. `aria-pressed` is what says the state to a screen reader. */}
+            <Button
+              size="icon"
+              variant={mode === "off" ? "ghost" : "primary"}
+              aria-label={S.workbench.pickTitle}
+              aria-pressed={mode !== "off"}
+              onClick={() => dispatchPick({ kind: "toggle" })}
+            >
+              <GlyphIcon d={ELEMENT_PICKER_ICON} size={ICON_SIZE.iconButton} />
+            </Button>
+          </Tooltip>
+        )}
+      </div>
+
+      {/* Before anything is loaded this row *is* the empty state (FR-08/FR-11): the dev servers this
+          panel can see, one click each, instead of making the user guess a port. Once a page is up it
+          is gone — it answered its question, and every row here is taken from the preview. */}
+      {guestState.kind !== "ready" && (
+        <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-gray-200 px-3 py-1.5 dark:border-gray-800">
+          <span className="mr-1 text-xs text-gray-400">{S.workbench.foundPorts}</span>
+          {probes === null ? (
+            <span className="text-xs text-gray-400">{S.workbench.probing}</span>
+          ) : probes.length === 0 ? (
+            <span className="text-xs text-gray-400">{S.workbench.noneFound}</span>
+          ) : (
+            probes.map((probe) => (
+              <button
+                key={probe.port}
+                type="button"
+                title={probe.title ?? probe.url}
+                onClick={() => load(probe.url)}
+                className="rounded-md border border-gray-200 px-2 py-0.5 font-mono text-xs text-gray-500 transition-colors duration-150 hover:bg-gray-100 dark:border-gray-800 dark:text-gray-400 dark:hover:bg-gray-800/60"
+              >
+                {probe.port}
+                <span className="ml-1 font-sans text-gray-400">{probeSuffix(probe)}</span>
+              </button>
+            ))
           )}
-          <span
-            data-workbench-count={pick.picked.length}
-            className="min-w-0 flex-1 truncate font-mono text-xs text-gray-500 dark:text-gray-400"
-          >
-            {selected !== null
-              ? `${S.workbench.picked} ${describeTarget(selected)}`
-              : pick.hovered !== null && mode === "picking"
-                ? `${S.workbench.candidate} ${describeTarget(pick.hovered)}`
-                : ""}
-            {pick.multi && pick.picked.length > 0 && (
-              <span className="ml-1.5 font-sans">{S.workbench.multiCount(pick.picked.length)}</span>
-            )}
-          </span>
         </div>
       )}
 
-      {/* The batch, element by element (L2.1-a: the count is not enough — one has to be removable).
-          Each row is the element's own description and a ×, and the × is the same unpick the page's
-          second click does, so the two ways of trimming a batch are one rule with two entrances. */}
-      {guestState.kind === "ready" && pick.multi && pick.picked.length > 0 && (
-        <div
-          data-workbench-picks="1"
-          className="shrink-0 border-b border-gray-200 px-3 py-1.5 dark:border-gray-800"
-        >
-          <span className="mr-1.5 text-xs text-gray-400">
-            {S.workbench.multiCount(pick.picked.length)}
-          </span>
-          {pick.picked.map((entry) => (
-            <span
-              key={entry.cssSelector}
-              data-workbench-pick={entry.cssSelector}
-              className="mr-1 inline-flex items-center gap-1 rounded-md bg-gray-100 py-0.5 pl-2 pr-1 font-mono text-xs text-gray-800 dark:bg-gray-800 dark:text-gray-200"
-            >
-              <span className="max-w-40 truncate">{describeTarget(entry)}</span>
-              <button
-                type="button"
-                aria-label={S.workbench.multiRemove(describeTarget(entry))}
-                onClick={() => dispatchPick({ kind: "unpick", cssSelector: entry.cssSelector })}
-                className="rounded p-0.5 text-gray-400 transition-colors duration-150 hover:text-gray-700 dark:hover:text-gray-200"
+      {notice}
+
+      {/* —— The selection interface (L2.2b) —— one row, and only what picking needs: its two states
+          (多选, 暂离) as marks, what is picked as chips, and the one thing to do with what is
+          picked. 加入对话 lives at the end of *this* row rather than on the payload card below: the
+          card is a description of that action, not a second place to take it — one action, one
+          entrance.
+
+          The row outlives the picker itself (`mode` off with elements already picked), because
+          those elements are still what 加入对话 is for. With neither, the panel is a browser, and
+          that is the state it opens in. */}
+      {guestState.kind === "ready" && (mode !== "off" || pick.picked.length > 0) && (
+        <div className="flex shrink-0 items-center gap-1.5 border-b border-gray-200 px-3 py-1.5 dark:border-gray-800">
+          {mode !== "off" && (
+            <>
+              {/* 多选 (L2.1-a) is a state *inside* pick mode, so its mark is offered only while
+                  there is picking to be in, and `aria-pressed` carries which of the two it is —
+                  the same shape as the arrow that got us here. */}
+              <Tooltip label={S.workbench.multiStart} placement="bottom" className="shrink-0">
+                <Button
+                  size="icon"
+                  variant={pick.multi ? "primary" : "ghost"}
+                  aria-label={S.workbench.multiStart}
+                  aria-pressed={pick.multi}
+                  onClick={() => dispatchPick({ kind: "multi-toggle" })}
+                >
+                  <GlyphIcon d={MULTI_PICK_ICON} size={ICON_SIZE.iconButton} />
+                </Button>
+              </Tooltip>
+              {/* (暂离 used to sit here — see the note on 清除 below.) */}
+            </>
+          )}
+          {/* 清除 — the chips' own ×s raised to all of them at once, for a batch that got away from
+              you. It stands where 暂离 used to, and 暂离 is gone (L2.2b): standing down only ever
+              meant "the page is mine again, and my picks are still here", which the address bar's
+              arrow does — it is that feature's switch, and it does not touch `picked` either. Unlike
+              the two marks inside the picking group, this one lives *outside* it: it is about what is
+              already picked, so it must still be reachable after the picker is switched off. */}
+          {pick.picked.length > 0 && (
+            <Tooltip label={S.workbench.clearPicks} placement="bottom" className="shrink-0">
+              <Button
+                size="icon"
+                variant="ghost"
+                aria-label={S.workbench.clearPicks}
+                onClick={() => dispatchPick({ kind: "cleared" })}
               >
-                ×
-              </button>
-            </span>
-          ))}
+                <GlyphIcon d={CLEAR_ICON} size={ICON_SIZE.iconButton} />
+              </Button>
+            </Tooltip>
+          )}
+          {/* What is picked — or, before the first pick, what is under the cursor. One slot for
+              both, because they are the same question at different moments, and because a count
+              printed beside the list of the things counted says it twice (L2.2b). The count is not
+              lost: it is the slot's accessible name, and `data-workbench-count` for the scripts. */}
+          <div
+            data-workbench-count={pick.picked.length}
+            role="group"
+            aria-label={
+              pick.picked.length > 0 ? S.workbench.multiCount(pick.picked.length) : undefined
+            }
+            className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden"
+          >
+            {pick.picked.length === 0 ? (
+              <span className="truncate font-mono text-xs text-gray-500 dark:text-gray-400">
+                {pick.hovered !== null && mode === "picking"
+                  ? `${S.workbench.candidate} ${describeTarget(pick.hovered)}`
+                  : ""}
+              </span>
+            ) : (
+              pick.picked.map((entry) => (
+                <span
+                  key={entry.cssSelector}
+                  data-workbench-pick={entry.cssSelector}
+                  className="inline-flex shrink-0 items-center gap-1 rounded-md bg-gray-100 py-0.5 pl-2 pr-1 font-mono text-xs text-gray-800 dark:bg-gray-800 dark:text-gray-200"
+                >
+                  <span className="max-w-32 truncate">{describeTarget(entry)}</span>
+                  <button
+                    type="button"
+                    aria-label={S.workbench.multiRemove(describeTarget(entry))}
+                    onClick={() => dispatchPick({ kind: "unpick", cssSelector: entry.cssSelector })}
+                    className="rounded p-0.5 text-gray-400 transition-colors duration-150 hover:text-gray-700 dark:hover:text-gray-200"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))
+            )}
+          </div>
+          <Tooltip label={S.workbench.addToChat} placement="bottom" className="shrink-0">
+            <Button
+              size="icon"
+              variant="primary"
+              aria-label={S.workbench.addToChat}
+              disabled={payload === null}
+              onClick={addToConversation}
+            >
+              <GlyphIcon d={ADD_TO_CHAT_ICON} size={ICON_SIZE.iconButton} />
+            </Button>
+          </Tooltip>
         </div>
       )}
 
       {/* §9.4's bounds, said where they bite (M4.4): the structures the picker cannot enter, an element
           that cannot be seen, and the frames the page embeds. §2.3 requires saying it rather than
-          quietly handing over a neighbour — so it sits above the payload, which is what it qualifies. */}
+          quietly handing over a neighbour — so it sits directly under the row it qualifies. */}
       {bounds.length > 0 && (
         <div
           data-workbench-bounds="1"
@@ -1268,60 +1274,11 @@ export function WorkbenchPanel({
         </div>
       )}
 
-      {/* The payload, as it will be handed to the Agent. It sits under the picker row because that is
-          what it describes, and it is shown in full — the point of the feature is that nothing goes
-          into the conversation that the user could not have read first. */}
-      {payload !== null && (
-        <div className="shrink-0 border-b border-gray-200 dark:border-gray-800">
-          <div className="flex items-center gap-2 px-3 pt-1.5">
-            <span className="min-w-0 flex-1 truncate text-xs font-medium text-gray-600 dark:text-gray-300">
-              {batch === null
-                ? S.workbench.payload.title
-                : S.workbench.payload.batchTitle(batch.elements.length, groupByFile(items).length)}
-            </span>
-            <Button size="sm" variant="primary" onClick={addToConversation}>
-              {S.workbench.addToChat}
-            </Button>
-          </div>
-          <div className="max-h-32 overflow-y-auto px-3 py-1">
-            {(batch === null
-              ? payloadRows(
-                  payload as ElementPayload,
-                  sourceRowText((payload as ElementPayload).source, {
-                    pending: sourcePending,
-                    gap: sourceGap,
-                  }),
-                )
-              : batchRows(items, sourceRowFor)
-            ).map((row) => (
-              <div key={row.label} className="flex gap-2 text-xs leading-5">
-                <span className="w-14 shrink-0 text-gray-400">{row.label}</span>
-                <span
-                  className="min-w-0 flex-1 truncate font-mono text-gray-600 dark:text-gray-300"
-                  title={row.value}
-                >
-                  {row.value}
-                </span>
-              </div>
-            ))}
-          </div>
-          {/* Collapsed on purpose: measured in the m25 acceptance, a payload block with the JSON
-              expanded left the preview pane 91px tall (from 526px) — an inspector that eats the
-              thing it inspects. The facts above are the same data in the form you can read at a
-              glance; the JSON is one click away for when you want it verbatim. */}
-          <details className="px-3 pb-2">
-            <summary className="cursor-pointer text-xs text-gray-500 dark:text-gray-400">
-              {batch === null ? S.workbench.payload.json : S.workbench.payload.jsonBatch}
-            </summary>
-            <pre
-              data-workbench-payload="1"
-              className="mt-1 max-h-48 overflow-auto rounded-md bg-gray-50 p-2 font-mono text-[11px] leading-4 text-gray-600 dark:bg-gray-900 dark:text-gray-300"
-            >
-              {JSON.stringify(payload, null, 2)}
-            </pre>
-          </details>
-        </div>
-      )}
+      {/* The payload card used to sit here — every field of the frozen schema, then the JSON itself.
+          It is gone (L2.2b): the panel is a browser, and a browser does not print the request body.
+          What the card asserted — that nothing reaches the conversation the user could not have read
+          first — now rests on the composer's chip alone, which names the element and its `refId` and
+          whose message carries the payload. See `决策日志` D33 for what that costs. */}
 
       {/* §9.4's support matrix (5.4), as a fold — not a "?" (the frontend rule: a circled question
           mark may only sit beside a title, and this has none). It is shown exactly while no page is
@@ -1366,11 +1323,9 @@ export function WorkbenchPanel({
               : S.workbench.pickedNext
             : pick.multi
               ? S.workbench.multiHint
-              : mode === "paused"
-                ? S.workbench.pausedHint
-                : mode === "off"
-                  ? S.workbench.pickOffHint
-                  : S.workbench.pickHint}
+              : mode === "off"
+                ? S.workbench.pickOffHint
+                : S.workbench.pickHint}
         </p>
       )}
     </div>

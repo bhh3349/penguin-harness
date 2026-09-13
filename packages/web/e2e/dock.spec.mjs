@@ -13,6 +13,9 @@
  *   onto the drop targets;
  * - the arrangement is PER CONVERSATION (each one manages its own tabs, browser-window
  *   style) and survives a reload; the bottom dock's height ratio is a global preference;
+ * - a right panel drags wider than the old constant cap — the chat column's floor is the only
+ *   bound — and the pinned sidebar then stands down to its rail instead of squeezing the chat;
+ *   give the width back (drag, or the rail's own expand control) and the sidebar returns;
  * - a new shell starts in the conversation's Workspace, not the home directory;
  * - "Detach" hands the terminal off to /terminal?id=… in a new window and its tab leaves;
  * - a failed shell create surfaces as an error toast instead of silence.
@@ -380,6 +383,65 @@ test("sizes and the arrangement survive a reload; hidden stays hidden", async ({
   await expect(
     dockAt(page, "right").locator('[data-tab-id="workspace"][data-active="true"]'),
   ).toBeVisible();
+});
+
+/**
+ * The width a right panel may take, and who gives way when it takes it. The divider used to stop
+ * at a constant cap (half the window, never past 720px) while the chat column still had room to
+ * spare, which read as a panel with a fixed width; it now stops at the chat column's own floor
+ * and the pinned sidebar yields instead.
+ */
+test("a wide panel takes the sidebar's room, not the chat column's", async ({ page }) => {
+  await provisionAndLogin(page.request, U, P);
+  const projectId = await configureProjectModel(page.request);
+  await killAllTerminals(page.request);
+  const sessionId = await createSession(page.request, projectId);
+  await page.goto(`${BASE}/chat/${sessionId}`);
+  await page.getByPlaceholder(/输入消息/).waitFor();
+
+  await openViaPicker(page, "right", "workspace");
+  const right = dockAt(page, "right");
+  const sidebar = page.getByTestId("sidebar");
+  const vHandle = page.locator('[data-testid="dock-resizer"][aria-orientation="vertical"]');
+  const panelWidth = async () => (await right.boundingBox()).width;
+  /** Drag the divider to `x` (a viewport coordinate) and let the width settle. */
+  const dragTo = async (x) => {
+    const hb = await vHandle.boundingBox();
+    await page.mouse.move(hb.x + hb.width / 2, hb.y + hb.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(x, hb.y + hb.height / 2, { steps: 8 });
+    await page.mouse.up();
+  };
+
+  // 1280×720 playwright viewport: the default ~40% width leaves the sidebar its room, so the
+  // sidebar is pinned and its own collapse preference is untouched by any of this.
+  await expect(sidebar).toHaveAttribute("data-collapsed", "false");
+  expect(await panelWidth()).toBeLessThan(720);
+
+  // Drag far past the old cap. 1280 - rail(48) - chat floor(420) = 812 is where it lands, and by
+  // then the sidebar has no room left: it is the rail, not a squeezed chat column.
+  await dragTo(120);
+  const wide = await panelWidth();
+  expect(wide).toBeGreaterThan(720);
+  expect(wide).toBeLessThanOrEqual(812);
+  await expect(sidebar).toHaveAttribute("data-collapsed", "true");
+
+  // Dragging back to a width that fits brings it home on its own: yielding is layout, not a
+  // preference, so nothing was written to the stored collapse state.
+  await dragTo((await vHandle.boundingBox()).x + 300);
+  await expect(sidebar).toHaveAttribute("data-collapsed", "false");
+  expect(await panelWidth()).toBeLessThan(572);
+  expect(await page.evaluate(() => localStorage.getItem("penguin.sidebarCollapsed"))).not.toBe("1");
+
+  // And the rail's own expand control is not a dead button while a panel is holding the room: it
+  // takes the width back from the panel (288 sidebar + 420 chat is all that is left to keep).
+  await dragTo(120);
+  await expect(sidebar).toHaveAttribute("data-collapsed", "true");
+  await sidebar.getByRole("button", { name: "展开" }).first().click();
+  // The aside is pinned again on the same frame, but the panel's own width animates (200ms), so
+  // poll rather than read a box caught mid-flight — the aside's attribute flips first.
+  await expect(sidebar).toHaveAttribute("data-collapsed", "false");
+  await expect.poll(panelWidth).toBeLessThanOrEqual(1280 - 288 - 420);
 });
 
 test("each conversation manages its own tabs: nothing leaks, and each side survives the round trip", async ({

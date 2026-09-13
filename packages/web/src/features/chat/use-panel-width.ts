@@ -25,9 +25,60 @@ import { createStore } from "zustand/vanilla";
 const MIN_WIDTH = 320;
 const WIDTH_STORAGE_KEY = "penguin.panelWidth";
 
-/** Width cap: at most half the window (keeping the chat column usable), plus a hard 720px readability ceiling. */
+/**
+ * The chat column's own floor, in px. The panel stops here rather than squeezing it.
+ *
+ * This replaced a cap of "half the window, never past 720px": that stopped the drag while the
+ * chat column was still wide, which read as a panel that simply had a fixed width — the divider
+ * could barely move on a normal window. What the chat can actually spare is the honest bound.
+ */
+export const CHAT_MIN_WIDTH = 420;
+
+/**
+ * The pinned sidebar and its collapsed rail, in px — app-layout's `lg:w-72` and `w-12`. The
+ * sidebar is the first thing that yields when a panel takes width: below the point where both
+ * fit (see `fitsWithSidebar`) app-layout shows the rail instead of squeezing the chat column.
+ */
+export const SIDEBAR_WIDTH = 288;
+export const SIDEBAR_RAIL_WIDTH = 48;
+
+/** Below this window width (Tailwind's `md`) the sidebar is not rendered at all — nothing to yield. */
+export const SIDEBAR_VISIBLE_WIDTH = 768;
+
+/**
+ * Width cap: everything the window can spare once the chat column keeps its minimum and the
+ * sidebar is down to its rail. A wide window therefore lets the panel grow genuinely wide (a
+ * preview or a transcript wants the room), and the cap scales with the window instead of
+ * being a constant.
+ */
 export function maxWidthFor(windowWidth: number): number {
-  return Math.max(MIN_WIDTH, Math.min(720, Math.round(windowWidth * 0.5)));
+  return Math.max(MIN_WIDTH, Math.round(windowWidth - SIDEBAR_RAIL_WIDTH - CHAT_MIN_WIDTH));
+}
+
+/**
+ * Whether an expanded sidebar still fits beside a panel this wide — the layout question
+ * app-layout asks before showing the pinned sidebar. Equality fits: the chat column sitting
+ * exactly at its minimum is the intent, not an overflow.
+ */
+export function fitsWithSidebar(windowWidth: number, panelWidth: number): boolean {
+  if (windowWidth < SIDEBAR_VISIBLE_WIDTH) return true; // no sidebar on screen to make room for
+  return SIDEBAR_WIDTH + CHAT_MIN_WIDTH + panelWidth <= windowWidth;
+}
+
+/**
+ * Whether the pinned sidebar has to stand down because a panel is taking its room. Only a dock
+ * on the *right* edge competes for horizontal space: a bottom dock costs height, and below `lg`
+ * (`isNarrow()`) the docks merge into that same bottom surface, so neither is a reason to yield.
+ * Pure, so the rule reads as one sentence and is testable; app-layout supplies the dock facts.
+ */
+export function sidebarYieldsTo(
+  windowWidth: number,
+  panelWidth: number,
+  rightDockOpen: boolean,
+  narrow: boolean,
+): boolean {
+  if (!rightDockOpen || narrow) return false;
+  return !fitsWithSidebar(windowWidth, panelWidth);
 }
 
 /**
@@ -97,6 +148,22 @@ export function panelWidth(): number {
 /** Subscribes to the shared width alone — for a consumer with its own resize gesture. */
 export function usePanelWidthValue(): number {
   return useStore(widthStore, () => readWidth());
+}
+
+/**
+ * Subscribes to the one *question* the sidebar asks of the width — "does this panel leave room
+ * for an expanded sidebar?" — rather than to the width itself: a drag writes the width every
+ * frame, and a layout this size (the sidebar's session list included) has no business re-rendering
+ * on each of them to answer a yes/no that changes at most once per drag.
+ */
+export function useSidebarYields(
+  windowWidth: number,
+  rightDockOpen: boolean,
+  narrow: boolean,
+): boolean {
+  return useStore(widthStore, () =>
+    sidebarYieldsTo(windowWidth, readWidth(), rightDockOpen, narrow),
+  );
 }
 
 /** Sets the shared width from another surface's drag, clamped to the same bounds. */

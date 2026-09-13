@@ -366,6 +366,29 @@ export const SCHEDULE_ICON =
  */
 export const ELEMENT_PICKER_ICON = "M4 4h16v12H4zM10 10l7 4-3 1-1 3z";
 
+/**
+ * Enter / return: the mark the workbench's address bar carries in place of a "load" button, because
+ * a browser has no load button — it has this key. Drawn as the key itself: down the right edge, round
+ * the corner, along the bottom, with the arrowhead at the end of the stroke.
+ */
+export const ENTER_ICON = "M20 5v7a3 3 0 0 1-3 3H6M10 11l-4 4 4 4";
+
+/**
+ * Pick several: a second frame behind the picker's own, because that is the whole difference — the
+ * same gesture, more than one element. Two frames rather than two pointers: at the 15px an icon
+ * button draws, a pair of tiny cursors fuses into a blob, while an outline stays legible.
+ */
+export const MULTI_PICK_ICON = "M9 4h11v11M5 8h11v11H5z";
+
+/**
+ * Clear them all: a waste bin — lid line across, the handle above it, and the body tapering to a
+ * narrower foot. The workbench's chips carry their own ×s and this is those ×s raised to the whole
+ * batch, so it is a bin rather than another ×: one element is dropped with the cross on its chip, the
+ * batch with this. It draws at the same 15px as the marks beside it, which is why the lid is one
+ * straight line and the body has no ribs — a ribbed body fuses into a solid block that size.
+ */
+export const CLEAR_ICON = "M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13";
+
 export const NAV_ICONS = {
   agents: AGENT_GROUP_ICON,
   /** Plugin library (the puzzle piece). */

@@ -2578,7 +2578,12 @@ Benchmark：
     badAddress: "这不是一个能打开的地址，请填 http://主机:端口",
     loading: "正在载入…",
     connected: "已连接",
-    tierPrecise: "页面带 sourcemap：能否精确到行，选中后看载荷那一行",
+    /**
+     * The state dot's sentence while the panel is pointed at nothing (L2.2b). PRD FR-01 names four
+     * states — 未连接 / 已连接 / 不支持 / 加载失败 — and the dot carries all four; this is the first.
+     */
+    notConnected: "未连接",
+    tierPrecise: "页面带 sourcemap：能不能精确到行，选中一个元素就知道（位置跟着消息一起发出去）",
     tierDegraded: "只能降级：这个页面读不到 sourcemap，选中的元素给不出源码行",
     tierOpaque: "页面不让跨源读取，无法判断能否定位",
     tierUnknown: "还没能判断定位档位",
@@ -2614,7 +2619,7 @@ Benchmark：
           styles: "改样式时 Agent 可能直接改样式表 —— 那是它的判断，不是位置给错了",
           ambiguous: "「有歧义」时给的位置可能是包着它的那层元素（同一处写法有多个兄弟节点）",
           channel:
-            "拾取结果走预览页自己的 console 回传：页面理论上能伪造一条，所以载荷要先摆给你看、由你点「加入对话」才发得出去；要彻底堵住得动应用的安全边界，L1 不做",
+            "拾取结果走预览页自己的 console 回传：页面理论上能伪造一条，所以只有你点「加入对话」的元素才进得了消息；面板不再把载荷摆出来给你过目（D33），这条只能靠你自己把关；要彻底堵住得动应用的安全边界，L1 不做",
         },
       },
     },
@@ -2633,33 +2638,39 @@ Benchmark：
     desktopOnly: "UI 设计工作台需要桌面端应用",
     desktopOnlyDetail:
       "预览要把你正在跑的 dev server 嵌进来并读它页面里的元素，这只有桌面端壳（pnpm desktop）能做到；浏览器里打开的应用只能用其他面板。",
-    pickStart: "开启选择",
-    pickStop: "关闭选择",
-    pickPause: "暂离",
-    pickResume: "恢复选择",
+    /**
+     * The pick control's name (L2.2b). One name rather than a "start / stop" pair: this is a toggle
+     * in an address bar, so its state is `aria-pressed` plus the accent fill — the pair would be the
+     * labelled switch this replaced, and it would also rename the button under the user's cursor. It
+     * is now the *only* way out of picking as well: 暂离 was removed (D33) because this arrow does
+     * the same thing — hand the page back without touching the picks.
+     */
+    pickTitle: "选择元素",
+    /**
+     * 清除 (L2.2b/D33): the chips' own ×s raised to the whole batch. It stands exactly where 暂离
+     * used to — but 暂离 ("stand down: the page is yours again, my picks stay") is gone, because the
+     * address bar's arrow already is that feature's switch and it does not touch the picks either.
+     */
+    clearPicks: "清除已选元素",
     /**
      * Multi-select (L2.1-a): a state inside pick mode, entered on purpose. The copy says what a click
      * does *in this state* — accumulate — because that is the one thing a user has to know before the
      * first click, and it says how to take one back, because a batch is something you build and trim.
      */
     multiStart: "多选元素",
-    multiStop: "退出多选",
     multiCount: (count: number) => `已选中 ${count} 个`,
     multiRemove: (name: string) => `取消选中 ${name}`,
     /** The chip a whole batch wears in the composer: one chip, one message (L2.1-b). */
     batchChip: (count: number, files: number) => `${count} 个元素 / ${files} 个文件`,
     candidate: "候选",
-    picked: "已选中",
     pickHint:
-      "悬停高亮、点击选中（那一次点击不会落到页面上）；Esc 先取消选中，再按一次退出选择模式。够不着的元素先点「暂离」把页面操作出来，再「恢复选择」。",
+      "悬停高亮、点击选中（那一次点击不会落到页面上）；Esc 先取消选中，再按一次退出选择模式。够不着的元素先按地址栏右边的箭头退出选择模式，把页面操作出来，再按回去接着选。",
     multiHint:
-      "多选已开：连续点击把元素加进这一批，再点同一个元素就是从这一批里取消它；「加入对话」把这一批放进同一条消息（同一个文件里改几处、跨文件一起改都行）。",
-    pausedHint:
-      "暂离中：页面完全归你操作——下拉、模态、悬停浮层都可以点开，点「恢复选择」接着选（L1 不会替你展开）。",
-    pickOffHint: "选择模式已关：页面交互完全正常。",
-    pickedNext: "载荷已组装好（见上方）；「加入对话」把它放进输入框。",
+      "多选已开：连续点击把元素加进这一批，再点同一个元素就是从这一批里取消它；「加入对话」把这一批放进同一条消息（同一个文件里改几处、跨文件一起改都行），「清除已选元素」把这一批一次清空。",
+    pickOffHint: "选择模式已关：页面完全归你操作。点地址栏右侧的选择元素按钮开始选元素。",
+    pickedNext: "「加入对话」把这个元素放进输入框，载荷跟着那条消息一起发出去。",
     pickedNextBatch: (count: number) =>
-      `这一批（${count} 个元素）已组装好（见上方）；「加入对话」把它们放进同一条消息。`,
+      `「加入对话」把这一批（${count} 个元素）放进同一条消息，载荷跟着它一起发出去。`,
     addToChat: "加入对话",
     /** One element a send-time re-resolution could not find (AC-8), and which way it went. */
     goneElement: (label: string, reason: "missing" | "replaced" | "page-changed") =>
@@ -2709,31 +2720,10 @@ Benchmark：
       "zero-size": "你选中的元素尺寸是 0×0，页面上没有可见区域。",
     },
     notVisibleDetail:
-      "先「暂离」把页面操作到它可见（展开下拉、打开模态），再「恢复选择」重新点它；L1 不会替你展开。",
+      "先按地址栏右边的箭头退出选择模式，把页面操作到它可见（展开下拉、打开模态），再按回去重新点它；L1 不会替你展开。",
     /** The page embeds frames; said while picking, before the user hunts for what is inside one. */
     framesInPage: (count: number) =>
       `这个页面里有 ${count} 个 iframe：L1 不进入 frame 内部，那里面的元素选不到。`,
-    payload: {
-      title: "载荷（§6 v1）",
-      batchTitle: (count: number, files: number) =>
-        `载荷（§6 v2 · ${count} 个元素 / ${files} 个文件）`,
-      refId: "refId",
-      selector: "选择器",
-      tag: "标签",
-      role: "角色",
-      name: "名称",
-      text: "文本",
-      testId: "testId",
-      rect: "矩形",
-      parentChain: "父链",
-      classes: "类名",
-      elements: "元素",
-      project: "项目",
-      page: "页面",
-      source: "源码位置",
-      json: "载荷 JSON（v1）",
-      jsonBatch: "载荷 JSON（v2）",
-    },
     /**
      * The line above a batch in the message (L2.1-c). One message, one `page`, and the elements named
      * **by file** — the same grouping the payload's `elements` array is ordered by, so the sentence and

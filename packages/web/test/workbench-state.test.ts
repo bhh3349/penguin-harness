@@ -187,11 +187,16 @@ describe("reducePick", () => {
   const elsewhere = { ...page, url: "http://127.0.0.1:5199/other" };
 
   const fold = (events: PickEvent[]): PickState =>
-    events.reduce(reducePick, { ...NO_PICK, live: true });
+    events.reduce(reducePick, { ...NO_PICK, wanted: true, live: true });
 
-  it("is on by default, and off until there is a page to pick in", () => {
-    expect(pickMode(NO_PICK)).toBe("off");
-    expect(pickMode(reducePick(NO_PICK, { kind: "installed" }))).toBe("picking");
+  it("is off until the user asks for it, and off until there is a page to pick in", () => {
+    // L2.2b: a fresh panel is a browser. Installing a picker into the page does not start picking —
+    // the address bar's arrow does.
+    expect(NO_PICK.wanted).toBe(false);
+    expect(pickMode(reducePick(NO_PICK, { kind: "installed" }))).toBe("off");
+    expect(pickMode(reducePick({ ...NO_PICK, wanted: true }, { kind: "installed" }))).toBe(
+      "picking",
+    );
   });
 
   it("leaves the switch alone when a page loads: a reload must not undo it", () => {
@@ -217,11 +222,29 @@ describe("reducePick", () => {
     expect(pickMode(reducePick(cleared, { kind: "escape" }))).toBe("off");
   });
 
-  it("keeps the selection across 暂离, because standing down is not forgetting", () => {
-    const paused = fold([{ kind: "selected", target: badge, page }, { kind: "pause" }]);
-    expect(paused.picked).toEqual([badge]);
-    expect(pickMode(paused)).toBe("paused");
-    expect(pickMode(reducePick(paused, { kind: "resume" }))).toBe("picking");
+  it("keeps the picks when the arrow is switched off — which is why 暂离 is gone (D33)", () => {
+    // The whole argument for dropping 暂离: switching picking off already means "the page is mine
+    // again, and my picks are still here" — the switch only moves `wanted`, never `picked`, so the
+    // second way out it used to offer was the same gesture with a different name.
+    const off = fold([{ kind: "selected", target: badge, page }, { kind: "toggle" }]);
+    expect(off.wanted).toBe(false);
+    expect(pickMode(off)).toBe("off");
+    expect(off.picked).toEqual([badge]);
+    const back = reducePick(off, { kind: "toggle" });
+    expect(pickMode(back)).toBe("picking");
+    expect(back.picked).toEqual([badge]);
+  });
+
+  it("empties the batch on one 清除, and keeps the page it was picked on", () => {
+    const cleared = fold([
+      { kind: "selected", target: badge, page },
+      { kind: "selected", target: button, page },
+      { kind: "cleared" },
+    ]);
+    expect(cleared.picked).toEqual([]);
+    expect(cleared.page).toEqual(page);
+    // 清除 is the chips' ×s at once, so it is not a way out of picking either.
+    expect(pickMode(cleared)).toBe("picking");
   });
 
   it("takes the page's own word for it when the page's picker cleared or left", () => {

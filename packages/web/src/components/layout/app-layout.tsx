@@ -4,7 +4,7 @@
  * - <md: top thin bar (hamburger -> sidebar drawer + brand name) + main content.
  * All chrome uses solid backgrounds and avoids stacking contexts (frosted-glass/transform would trap overlay z-index).
  */
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { NavLink, Outlet, useMatch, useNavigate } from "react-router";
 import * as api from "../../api/endpoints";
 import { S } from "../../lib/strings";
@@ -26,7 +26,19 @@ import { parkActiveDraft } from "../../features/chat/draft-sessions";
 import { ChangePasswordDialog } from "../account/change-password-dialog";
 import { UpdateModal } from "../account/update-modal";
 import { TerminalDockRuntime } from "../../features/terminal/terminal-view-pool";
-import { setDockScope } from "../../features/dock/dock-state";
+import {
+  dockVersion,
+  isDockVisible,
+  isNarrow,
+  setDockScope,
+  subscribeDock,
+} from "../../features/dock/dock-state";
+import {
+  CHAT_MIN_WIDTH,
+  SIDEBAR_WIDTH,
+  setPanelWidth,
+  useSidebarYields,
+} from "../../features/chat/use-panel-width";
 import { toneStrip } from "../../lib/tone";
 
 /**
@@ -312,6 +324,32 @@ export function AppLayout() {
       return next;
     });
 
+  // —— Room for the pinned sidebar ——
+  // A side panel's width is shared (use-panel-width.ts) and can now grow until the chat column
+  // hits its own floor, so on a window that cannot hold everything the sidebar is what yields:
+  // past the point where both fit, the rail is shown instead of the chat being squeezed. This is
+  // layout, not a preference — `collapsed` stays the user's own choice and stays persisted, while
+  // yielding is recomputed, so dragging the panel back or widening the window brings the pinned
+  // sidebar home.
+  const [windowWidth, setWindowWidth] = useState(() => window.innerWidth);
+  useEffect(() => {
+    const onResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  // Re-render on any dock change (the store's own idiom), then read the two facts the sidebar
+  // cares about straight off it: is a panel docked on the RIGHT edge, and have the docks merged
+  // into the narrow bottom surface (below `lg` a right dock costs the sidebar no width at all).
+  useSyncExternalStore(subscribeDock, dockVersion);
+  const sidebarYields = useSidebarYields(windowWidth, isDockVisible("right"), isNarrow());
+  const rail = collapsed || sidebarYields;
+  /** Rail → pinned: make room first, so this is never a no-op just because the panel is wide. */
+  const expandSidebar = () => {
+    if (sidebarYields) setPanelWidth(windowWidth - SIDEBAR_WIDTH - CHAT_MIN_WIDTH);
+    setCollapsed(false);
+    localStorage.setItem("penguin.sidebarCollapsed", "0");
+  };
+
   return (
     <div className="flex h-full">
       {/* Desktop: single-column sidebar (collapsible to a narrow rail).
@@ -325,15 +363,19 @@ export function AppLayout() {
           The panes do NOT cross-fade. Each is rendered at its own final width inside the box
           and clipped by it, so neither is ever laid out against a width it will not keep: the
           rail sits at its final 48px from the first frame while the box closes around it, and
-          the pinned sidebar is uncovered left to right instead of reflowing on every frame. */}
+          the pinned sidebar is uncovered left to right instead of reflowing on every frame.
+          The rail is also what the box shows while a wide side panel leaves no room (see
+          `sidebarYields` above) — same two panes, one more reason to be in the rail. */}
       <aside
+        data-testid="sidebar"
+        data-collapsed={rail ? "true" : "false"}
         className={`hidden shrink-0 overflow-hidden border-r border-gray-200 bg-gray-50 transition-[width] duration-200 ease-out md:block dark:border-gray-800 dark:bg-gray-900 ${
-          collapsed ? "w-12" : "w-64 lg:w-72"
+          rail ? "w-12" : "w-64 lg:w-72"
         }`}
       >
-        <div className={`h-full ${collapsed ? "w-12" : "w-64 lg:w-72"}`}>
-          {collapsed ? (
-            <CollapsedRail onExpand={toggleCollapsed} />
+        <div className={`h-full ${rail ? "w-12" : "w-64 lg:w-72"}`}>
+          {rail ? (
+            <CollapsedRail onExpand={expandSidebar} />
           ) : (
             <Sidebar onCollapse={toggleCollapsed} />
           )}
