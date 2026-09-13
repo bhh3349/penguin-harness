@@ -413,8 +413,8 @@ test("a wide panel takes the sidebar's room, not the chat column's", async ({ pa
     await page.mouse.up();
   };
 
-  // 1280×720 playwright viewport: the default ~40% width leaves the sidebar its room, so the
-  // sidebar is pinned and its own collapse preference is untouched by any of this.
+  // 1280×720 playwright viewport: the workspace tab's default (~40%) leaves the sidebar its room,
+  // so the sidebar is pinned and its own collapse preference is untouched by any of this.
   await expect(sidebar).toHaveAttribute("data-collapsed", "false");
   expect(await panelWidth()).toBeLessThan(720);
 

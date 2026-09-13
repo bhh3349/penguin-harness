@@ -4,7 +4,7 @@
 import type { ButtonHTMLAttributes } from "react";
 
 type Variant = "primary" | "secondary" | "danger" | "ghost";
-type Size = "sm" | "md" | "icon";
+type Size = "sm" | "md" | "icon" | "iconSm";
 
 const variantClass: Record<Variant, string> = {
   // primary uses the theme accent variable (defaults to neutral gray/white, switching with light/dark; becomes that color once an accent is selected).
@@ -27,6 +27,13 @@ const sizeClass: Record<Size, string> = {
   md: "px-3 py-1.5 text-sm rounded-md",
   /** Square icon button (no text; callers must supply title / aria-label). */
   icon: "p-1.5 rounded-md",
+  /**
+   * The square icon button one rung down: a `compactButton` (12px) glyph in 4px of padding, so a
+   * 22px box with its border where `icon` is 29px. For chrome that has to stay on one line inside
+   * a narrow column — the workbench panel's. Padding is what shrinks (6px → 4px), not the shape:
+   * it is still a square, still a button.
+   */
+  iconSm: "p-1 rounded-md",
 };
 
 /** Layout and type shared by a real button and the `<label>` that stands in for one. */
@@ -58,6 +65,6 @@ export function Button({ variant = "secondary", size = "md", className, ...rest 
  * that takes focus is the input inside the label rather than the label itself, and `cursor-pointer`
  * is spelled out, which a `<button>` gets from the app's base rules and a `<label>` does not.
  */
-export function labelButtonClass(variant: Variant, size: Exclude<Size, "icon">): string {
+export function labelButtonClass(variant: Variant, size: Exclude<Size, "icon" | "iconSm">): string {
   return `${buttonBase} cursor-pointer focus-within:ring-2 focus-within:ring-gray-400/30 ${variantClass[variant]} ${sizeClass[size]}`;
 }

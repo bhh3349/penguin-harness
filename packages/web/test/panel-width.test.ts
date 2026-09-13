@@ -40,6 +40,15 @@ describe("defaultWidthFor", () => {
     expect(defaultWidthFor(1920)).toBe(768);
     expect(defaultWidthFor(600)).toBe(320);
   });
+
+  it("is half of that for the workbench, which is a browser and not a reading surface (D34)", () => {
+    // The one tenant that names its own ratio; everything else (the transcript, the file tree,
+    // a terminal) keeps the 40% it was chosen for.
+    expect(defaultWidthFor(1920, "workbench")).toBe(384);
+    expect(defaultWidthFor(1280, "workbench")).toBe(320); // 256, under the floor
+    expect(defaultWidthFor(1920, "workspace")).toBe(768);
+    expect(defaultWidthFor(1920, "agents")).toBe(768);
+  });
 });
 
 describe("fitsWithSidebar", () => {

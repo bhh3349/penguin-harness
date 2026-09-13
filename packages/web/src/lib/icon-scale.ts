@@ -25,6 +25,15 @@ export const ICON_SIZE = {
   rowLead: 14,
   /** A glyph alone inside a square icon button, where it has no text to sit against and needs the extra weight. */
   iconButton: 15,
+  /**
+   * A glyph alone inside a *compact* icon button (`Button size="iconSm"`: 4px of padding, a 22px
+   * box): the workbench panel's own chrome — the address row's load/reload/arrow and the selection
+   * row's multi/clear/send. One rung below `iconButton` because that panel is a browser sharing a
+   * dock column with everything else, and it has to keep an address, four controls and a row of
+   * chips on one line at the column's narrowest (320px). A workbench control that is not this
+   * panel's chrome — the launcher's fan, the support matrix — stays on the rung its role names.
+   */
+  compactButton: 12,
   /** A group header's leading glyph (a folder, a new-chat pencil). */
   groupHeaderGlyph: 15,
   /** A group header's trailing action buttons, all of which must optically line up with each other. */

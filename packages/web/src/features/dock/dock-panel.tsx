@@ -90,6 +90,7 @@ import {
 import {
   persistPanelWidth,
   resetPanelWidth,
+  seedPanelWidth,
   setPanelWidth,
   usePanelWidthValue,
 } from "../chat/use-panel-width";
@@ -486,6 +487,19 @@ export function DockPanel({
   // ------------------------------------------------------------------------ boundary resize
   const [resizing, setResizing] = useState(false);
   const sideWidth = usePanelWidthValue();
+
+  // The column's *default* width belongs to the tenant showing in it (D34): while the user has
+  // not dragged one, moving between the workbench and a reading panel sizes the column to what
+  // that panel asks for — the workbench, a browser with a page in it, asks for half of what a
+  // transcript or the file tree wants. Only the right dock owns the column's width; the bottom
+  // one has no say in it. Once a width HAS been dragged, `seedPanelWidth` does nothing and every
+  // tab opens at that one width — the tab strip stays one column.
+  const activeKind = activeTab?.kind === "panel" ? activeTab.panel : undefined;
+  useLayoutEffect(() => {
+    if (horizontal) return;
+    seedPanelWidth(activeKind);
+  }, [horizontal, activeKind]);
+
   // The dock's own root node. The RIGHT dock's resize handle is a layout SIBLING of it
   // (it must cost real width), so the handle's events cannot `closest()` their way to the
   // dock — the ref is how both handles reach the box they resize.

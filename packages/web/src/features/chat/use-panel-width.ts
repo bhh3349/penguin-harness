@@ -15,12 +15,15 @@
  * next remount. So the value lives in a module-level store every hook subscribes to, and the
  * persisted preference is written once per drag (mouseup), not per frame.
  *
- * Width is a layout preference, not session data: it is never reset on a Session switch.
+ * Width is a layout preference, not session data: it is never reset on a Session switch. What a
+ * panel *opens* at while nothing has been dragged is the one thing that is per panel — see
+ * `defaultWidthFor` and the `workbench` entry in it.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent, RefObject } from "react";
 import { useStore } from "zustand/react";
 import { createStore } from "zustand/vanilla";
+import type { PanelKind } from "../dock/dock-state";
 
 const MIN_WIDTH = 320;
 const WIDTH_STORAGE_KEY = "penguin.panelWidth";
@@ -82,13 +85,35 @@ export function sidebarYieldsTo(
 }
 
 /**
- * Default width ≈ 40% of the window, clamped within the min/max bounds. Deliberately wider than
- * the old ~1/3: one panel now serves both the file tree and the subagent transcript, and the
- * transcript is the demanding tenant — a third of the window renders it as a narrow column of
- * wrapped tool output.
+ * Default width ≈ 40% of the window, clamped within the min/max bounds, and **per panel where a
+ * panel differs** (D34): the dock is one column, but what a tenant needs from it is not one
+ * number. The 40% is the reading surfaces' — the subagent transcript and the file tree, the
+ * latter because below 480px it falls back to its single-column drill-down — and the workbench
+ * asks for half of it, lazily: it is a browser with a page in it, and at 40% of a 1920px window
+ * it stood 768px wide beside the conversation.
+ *
+ * Only the *default* is per panel. A dragged width is still one stored preference that every
+ * panel opens at (see the file header), so the tab strip keeps behaving like one column once the
+ * user has said what they want.
  */
-export function defaultWidthFor(windowWidth: number): number {
-  return Math.min(maxWidthFor(windowWidth), Math.max(MIN_WIDTH, Math.round(windowWidth * 0.4)));
+const DEFAULT_RATIO: Partial<Record<PanelKind, number>> = { workbench: 0.2 };
+/** What a tenant that names no ratio asks for: the transcript, the tree, a terminal. */
+const FALLBACK_RATIO = 0.4;
+
+export function defaultWidthFor(windowWidth: number, kind?: PanelKind): number {
+  const ratio = (kind === undefined ? undefined : DEFAULT_RATIO[kind]) ?? FALLBACK_RATIO;
+  return Math.min(maxWidthFor(windowWidth), Math.max(MIN_WIDTH, Math.round(windowWidth * ratio)));
+}
+
+/**
+ * Sizes the column to `kind`'s default — **unless the user has dragged one**, in which case that
+ * single stored preference is what every panel opens at and this does nothing. The dock calls it
+ * as its active tab changes; a reader that seeds lazily (`readWidth`) gets the fallback ratio,
+ * and this then corrects it rather than double-seeding.
+ */
+export function seedPanelWidth(kind: PanelKind | undefined): void {
+  if (storedWidth() !== null) return;
+  writeWidth(defaultWidthFor(window.innerWidth, kind));
 }
 
 /** Reads the stored preference; null when nothing is stored (or storage is unreadable). */

@@ -1061,18 +1061,18 @@ export function WorkbenchPanel({
             has to know it became a mark. */}
         <Tooltip label={S.workbench.load} placement="bottom" className="shrink-0">
           <Button
-            size="icon"
+            size="iconSm"
             variant="primary"
             aria-label={S.workbench.load}
             onClick={() => load(draft)}
           >
-            <GlyphIcon d={ENTER_ICON} size={ICON_SIZE.iconButton} />
+            <GlyphIcon d={ENTER_ICON} size={ICON_SIZE.compactButton} />
           </Button>
         </Tooltip>
         {target !== null && (
           <Tooltip label={S.workbench.reload} placement="bottom" className="shrink-0">
             <Button
-              size="icon"
+              size="iconSm"
               variant="ghost"
               aria-label={S.workbench.reload}
               onClick={() => {
@@ -1082,7 +1082,7 @@ export function WorkbenchPanel({
                 }
               }}
             >
-              <GlyphIcon d={REFRESH_ICON} size={ICON_SIZE.iconButton} />
+              <GlyphIcon d={REFRESH_ICON} size={ICON_SIZE.compactButton} />
             </Button>
           </Tooltip>
         )}
@@ -1092,13 +1092,13 @@ export function WorkbenchPanel({
                 same shape as the DevTools arrow it copies, and the reason `pickStart`/`pickStop`
                 are gone. `aria-pressed` is what says the state to a screen reader. */}
             <Button
-              size="icon"
+              size="iconSm"
               variant={mode === "off" ? "ghost" : "primary"}
               aria-label={S.workbench.pickTitle}
               aria-pressed={mode !== "off"}
               onClick={() => dispatchPick({ kind: "toggle" })}
             >
-              <GlyphIcon d={ELEMENT_PICKER_ICON} size={ICON_SIZE.iconButton} />
+              <GlyphIcon d={ELEMENT_PICKER_ICON} size={ICON_SIZE.compactButton} />
             </Button>
           </Tooltip>
         )}
@@ -1151,13 +1151,13 @@ export function WorkbenchPanel({
                   the same shape as the arrow that got us here. */}
               <Tooltip label={S.workbench.multiStart} placement="bottom" className="shrink-0">
                 <Button
-                  size="icon"
+                  size="iconSm"
                   variant={pick.multi ? "primary" : "ghost"}
                   aria-label={S.workbench.multiStart}
                   aria-pressed={pick.multi}
                   onClick={() => dispatchPick({ kind: "multi-toggle" })}
                 >
-                  <GlyphIcon d={MULTI_PICK_ICON} size={ICON_SIZE.iconButton} />
+                  <GlyphIcon d={MULTI_PICK_ICON} size={ICON_SIZE.compactButton} />
                 </Button>
               </Tooltip>
               {/* (暂离 used to sit here — see the note on 清除 below.) */}
@@ -1172,12 +1172,12 @@ export function WorkbenchPanel({
           {pick.picked.length > 0 && (
             <Tooltip label={S.workbench.clearPicks} placement="bottom" className="shrink-0">
               <Button
-                size="icon"
+                size="iconSm"
                 variant="ghost"
                 aria-label={S.workbench.clearPicks}
                 onClick={() => dispatchPick({ kind: "cleared" })}
               >
-                <GlyphIcon d={CLEAR_ICON} size={ICON_SIZE.iconButton} />
+                <GlyphIcon d={CLEAR_ICON} size={ICON_SIZE.compactButton} />
               </Button>
             </Tooltip>
           )}
@@ -1221,13 +1221,13 @@ export function WorkbenchPanel({
           </div>
           <Tooltip label={S.workbench.addToChat} placement="bottom" className="shrink-0">
             <Button
-              size="icon"
+              size="iconSm"
               variant="primary"
               aria-label={S.workbench.addToChat}
               disabled={payload === null}
               onClick={addToConversation}
             >
-              <GlyphIcon d={ADD_TO_CHAT_ICON} size={ICON_SIZE.iconButton} />
+              <GlyphIcon d={ADD_TO_CHAT_ICON} size={ICON_SIZE.compactButton} />
             </Button>
           </Tooltip>
         </div>
