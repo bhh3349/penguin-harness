@@ -6,13 +6,13 @@
 
 [中文](2026-09-14-workbench-panel-width.zh.md)
 
-The dock column now opens at **20% of the window while the workbench is the tab showing** — on a 1920px window, 384px where it stood 768px — and the workbench panel's own chrome (load, reload, select-an-element, multi-select, clear, add-to-conversation) is drawn in a **22px box with a 12px glyph**, one rung below the app's other icon buttons, which are untouched. Every other tenant of that column — the subagent transcript, the file tree, a terminal — keeps the 40% it was chosen for.
+The dock column now opens at **20% of the window while the workbench is the tab showing** — on a 1920px window, 384px where it stood 768px — and the workbench panel's own chrome (load, reload, select-an-element, multi-select, clear, add-to-conversation) is drawn in a **23px box with a 12px glyph**, one rung below the app's other icon buttons, which are untouched. Every other tenant of that column — the subagent transcript, the file tree, a terminal — keeps the 40% it was chosen for.
 
 ## Details
 
 - **The default is now per panel** (`defaultWidthFor(windowWidth, kind)` in `features/chat/use-panel-width.ts`; the one entry that names its own ratio is `workbench: 0.2`). The 40% was chosen for the reading surfaces: the subagent transcript ("a third of the window renders it as a narrow column of wrapped tool output") and the file tree, which falls back to its single-column drill-down below 480px — halving those would have been a layout change nobody asked for.
 - **Only the default is per panel; the preference stays one value.** The width is deliberately shared by everything in the dock so switching tabs does not jump the column, and that is intact: the moment the user drags the divider, `penguin.panelWidth` holds that one width and every panel opens at it (`seedPanelWidth` does nothing while a stored width exists). Switching tabs with nothing dragged sizes the column to the incoming panel's own default; after a drag the tab strip behaves like the one column it is.
-- **Two new rungs in the design system, used by this panel only**: `Button size="iconSm"` (`p-1`, so a 22px box with its border where `icon` is 29px) and `ICON_SIZE.compactButton` (12, where `iconButton` is 15). The six call sites in `workbench-panel.tsx` moved to them; nothing else in the app did.
+- **Two new rungs in the design system, used by this panel only**: `Button size="iconSm"` (`p-1` — 4.5px a side at this app's 18px base, so a 23px box with its border where `icon` is 29px) and `ICON_SIZE.compactButton` (12, where `iconButton` is 15). The six call sites in `workbench-panel.tsx` moved to them; nothing else in the app did.
 - **Why the buttons moved with the width:** the column's floor is 320px, and this panel's chrome has to keep an address, four controls and a row of chips on one line at that width. The 29px box left the address box too little room; 22px does not.
 
 ## Verification

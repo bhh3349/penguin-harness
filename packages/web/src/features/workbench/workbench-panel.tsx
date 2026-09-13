@@ -1143,7 +1143,7 @@ export function WorkbenchPanel({
           those elements are still what 加入对话 is for. With neither, the panel is a browser, and
           that is the state it opens in. */}
       {guestState.kind === "ready" && (mode !== "off" || pick.picked.length > 0) && (
-        <div className="flex shrink-0 items-center gap-1.5 border-b border-gray-200 px-3 py-1.5 dark:border-gray-800">
+        <div className="flex shrink-0 items-center gap-1.5 border-b border-gray-200 px-3 py-0.5 dark:border-gray-800">
           {mode !== "off" && (
             <>
               {/* 多选 (L2.1-a) is a state *inside* pick mode, so its mark is offered only while
