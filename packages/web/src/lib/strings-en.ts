@@ -2699,6 +2699,77 @@ Scenarios:
     pickedNextBatch: (count: number) =>
       `Add to conversation stages this batch (${count} elements) as one message; the payload goes out with it.`,
     addToChat: "Add to conversation",
+    /**
+     * The element library (L3). It is not the payload chain: those elements are the ones in the
+     * preview, and they travel to an Agent as a message. These are elements a user saw on **other**
+     * sites, copied out of DevTools and pasted in — a collection, kept under categories of their own
+     * naming. It lives inside this panel (there is no nav entry and no other way in): the library is
+     * part of the workbench, so it is only reachable while the workbench is open.
+     *
+     * Two sentences carry the honesty of the feature and must stay: the "how to copy" hint (the
+     * paste has to come from DevTools or there is nothing to restore) and the no-styles notice (a
+     * markup-only paste renders as an unstyled skeleton — saying so is the difference between a
+     * feature that looks broken and one that did exactly what it could).
+     */
+    library: {
+      title: "Element library",
+      summary: (items: number, categories: number) =>
+        `${items} elements · ${categories} categories`,
+      newCategory: "New category",
+      addElement: "Add element",
+      categoryPlaceholder: "Category name, e.g. Buttons",
+      create: "Create",
+      cancel: "Cancel",
+      save: "Save to library",
+      saving: "Saving…",
+      saved: "Saved to the element library",
+      all: "All",
+      itemCount: (count: number) => `${count}`,
+      emptyLibrary:
+        "Nothing here yet. When you see an element you like on another site: F12 → select it → right-click Copy element (and Copy styles for its styles) → paste it into Add element.",
+      emptyCategory: "This category is still empty.",
+      needCategory: "Create a category first — an element needs somewhere to go.",
+      needPaste: "Paste what you copied first.",
+      source: (host: string) => `from ${host}`,
+      pasteLabel: "Paste what you copied (HTML, CSS, or both)",
+      howToCopy:
+        "How to copy: on the target page → F12 → select the element → right-click Copy element; for its styles right-click Copy styles as well.",
+      resultLabel: "Restored on the spot (no AI in the loop)",
+      itemName: "Name",
+      itemNamePlaceholder: "e.g. Gradient primary button",
+      itemCategory: "File under",
+      remove: (name: string) => `Remove ${name} from the element library`,
+      removeConfirm: (name: string) =>
+        `Delete “${name}”? The paste and the restored result go with it.`,
+      tooManyCategories: "Categories stop at 30 — delete a few first.",
+      tooManyItems: "The library holds 100 elements — delete a few first.",
+      tooLarge: "This element is too big to store (a single render is capped at 40KB).",
+      notEnoughRoom: "The library is nearly full — delete a few before saving more.",
+      duplicateCategory: "A category with that name already exists.",
+      reading: "Reading the element library…",
+      loadFailed:
+        "Could not read the element library (it lives on the server): check that the server is up.",
+      retry: "Retry",
+      saveFailed: "Could not save to the element library.",
+      /** The badge on an item whose render came from the model rather than the local restore (L3.4). */
+      aiTag: "AI restore",
+      close: "Close the element library",
+      /** What a restore could not do, said where the result is — never silently. */
+      notice: {
+        noStyles:
+          "No styles came with the paste — this will be an unstyled skeleton, not a failed restore. Copy styles as well to bring them along.",
+        stylesAttached:
+          "The styles are a bare declaration list (what Copy styles gives): there is one root element in the paste, so they were attached to it.",
+        stylesWrapped:
+          "The styles are a bare declaration list but the paste has several root elements — they were attached to a wrapper instead.",
+        scriptsDropped:
+          "<script> was removed: what the library keeps is inert, it does not run scripts.",
+        relativeUrls:
+          "There are relative image/font URLs here, which cannot resolve in the sandbox (the page's own address is not part of a paste — this is expected).",
+        noMarkup: "No HTML markup in the paste — a styles-only copy has nothing to restore here.",
+        truncated: "The paste was long; only its first part is here.",
+      },
+    },
     /** One element a send-time re-resolution could not find (AC-8), and which way it went. */
     goneElement: (label: string, reason: "missing" | "replaced" | "page-changed") =>
       reason === "missing"

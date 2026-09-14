@@ -3,7 +3,8 @@
  * ui_prefs is free-form JSON (theme / lastProjectId / credentialGuideSeen, etc.): GET reads
  * it whole, PUT shallow-merges (PATCH semantics) — several independent writers each write
  * their own fields without clobbering each other. Free-form does not mean unbounded: a key
- * carrying user-authored text is validated and capped on the way in (draftShortcuts).
+ * carrying user-authored text is validated and capped on the way in (draftShortcuts,
+ * elementLibrary).
  */
 import { Hono } from "hono";
 import { setCookie } from "hono/cookie";
@@ -15,6 +16,7 @@ import { readJson, requireString } from "../validate.js";
 import type { AppDeps } from "../../app.js";
 import { resolvePreviewTarget } from "../../services/preview-token.js";
 import { validateDraftShortcuts } from "../../services/draft-shortcuts.js";
+import { validateElementLibrary } from "../../services/element-library.js";
 import {
   INLINE_IMAGE_MAX_MB,
   MAX_ATTACHMENT_COUNT,
@@ -104,11 +106,14 @@ export function meRoutes(deps: AppDeps): Hono<AppEnv> {
   // clear credentialGuideSeen, breaking the "show onboarding once ever" guarantee.
   app.put("/prefs", async (c) => {
     const body = await readJson(c);
-    // The one known key whose value is text the user wrote, so the one that needs a bound here:
+    // The two known keys whose value is text the user wrote, so the two that need a bound here:
     // everything else in ui_prefs is a flag or an id, and the store itself has no schema to lean
     // on. Validated (and normalized) before the merge, so a rejected write stores nothing.
     if (body.draftShortcuts !== undefined) {
       body.draftShortcuts = validateDraftShortcuts(body.draftShortcuts);
+    }
+    if (body.elementLibrary !== undefined) {
+      body.elementLibrary = validateElementLibrary(body.elementLibrary);
     }
     const raw = deps.prefsRepo.get(c.var.user.userId);
     let current: UiPrefs = {};

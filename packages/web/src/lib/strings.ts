@@ -2676,6 +2676,72 @@ Benchmark：
     pickedNextBatch: (count: number) =>
       `「加入对话」把这一批（${count} 个元素）放进同一条消息，载荷跟着它一起发出去。`,
     addToChat: "加入对话",
+    /**
+     * The element library (L3). It is not the payload chain: those elements are the ones in the
+     * preview, and they travel to an Agent as a message. These are elements a user saw on **other**
+     * sites, copied out of DevTools and pasted in — a collection, kept under categories of their own
+     * naming. It lives inside this panel (there is no nav entry and no other way in): the library is
+     * part of the workbench, so it is only reachable while the workbench is open.
+     *
+     * Two sentences carry the honesty of the feature and must stay: the "how to copy" hint (the
+     * paste has to come from DevTools or there is nothing to restore) and the no-styles notice (a
+     * markup-only paste renders as an unstyled skeleton — saying so is the difference between a
+     * feature that looks broken and one that did exactly what it could).
+     */
+    library: {
+      title: "元素库",
+      summary: (items: number, categories: number) => `${items} 个元素 · ${categories} 个分类`,
+      newCategory: "新建分类",
+      addElement: "添加元素",
+      categoryPlaceholder: "分类名，比如「按钮」",
+      create: "建",
+      cancel: "取消",
+      save: "保存到元素库",
+      saving: "正在保存…",
+      saved: "已存进元素库",
+      all: "全部",
+      itemCount: (count: number) => `${count} 个`,
+      emptyLibrary:
+        "这里还没有东西。在别的网站上看到喜欢的元素：F12 → 选中元素 → 右键 Copy element（想要样式就再来一次 Copy styles）→ 贴进「添加元素」。",
+      emptyCategory: "这个分类还是空的。",
+      needCategory: "先建一个分类，元素才有地方放。",
+      needPaste: "先把复制的东西贴进来。",
+      source: (host: string) => `来源 ${host}`,
+      pasteLabel: "把你复制的东西贴进来（HTML / CSS 都行，一起贴也行）",
+      howToCopy:
+        "怎么复制：目标页面 → F12 → 选中元素 → 右键 Copy element；想要样式就再来一次 Copy styles。",
+      resultLabel: "还原结果（立刻给你，不等 AI）",
+      itemName: "名字",
+      itemNamePlaceholder: "比如「渐变主按钮」",
+      itemCategory: "放进",
+      remove: (name: string) => `从元素库删掉 ${name}`,
+      removeConfirm: (name: string) => `确定删掉「${name}」？贴进来的原文和还原结果都会没有。`,
+      tooManyCategories: "分类最多 30 个，先删掉几个。",
+      tooManyItems: "元素库最多放 100 个元素，先删掉几个。",
+      tooLarge: "这个元素太大了，元素库存不下（单条渲染结果上限 40KB）。",
+      notEnoughRoom: "元素库快满了，先删掉几个再存。",
+      duplicateCategory: "已经有同名分类了。",
+      reading: "正在读元素库…",
+      loadFailed: "读不到元素库（它存在服务端）：检查一下服务端是不是在跑。",
+      retry: "重试",
+      saveFailed: "没能存进元素库。",
+      /** The badge on an item whose render came from the model rather than the local restore (L3.4). */
+      aiTag: "AI 还原",
+      close: "收起元素库",
+      /** What a restore could not do, said where the result is — never silently. */
+      notice: {
+        noStyles:
+          "粘贴里没有样式 —— 这会是「没有样式的骨架」，不是还原失败。要样式就再 Copy styles 一次贴进来。",
+        stylesAttached:
+          "样式是一串声明（Copy styles 那种）：粘贴里只有一个根元素，已经挂到它身上。",
+        stylesWrapped: "样式是一串声明，但粘贴里有多个根元素 —— 已经套了一层容器把样式挂上去。",
+        scriptsDropped: "粘贴里的 <script> 去掉了：元素库里的东西是死物，不跑脚本。",
+        relativeUrls:
+          "里面有相对路径的图片/字体，沙箱里加载不出来（原页面的地址不在粘贴里，这是正常的）。",
+        noMarkup: "粘贴里没找到 HTML 标记 —— 只有样式的话，这里没法还原出东西来。",
+        truncated: "粘贴太长，只留了前面一段。",
+      },
+    },
     /** One element a send-time re-resolution could not find (AC-8), and which way it went. */
     goneElement: (label: string, reason: "missing" | "replaced" | "page-changed") =>
       reason === "missing"

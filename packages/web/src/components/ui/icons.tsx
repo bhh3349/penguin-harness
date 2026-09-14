@@ -389,6 +389,16 @@ export const MULTI_PICK_ICON = "M9 4h11v11M5 8h11v11H5z";
  */
 export const CLEAR_ICON = "M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13";
 
+/**
+ * The element library (L3): a folder — the one shape everybody already reads as "things filed away",
+ * which is exactly what this is. It sits at the end of the workbench's address row, after the pick
+ * arrow, because the library belongs to the panel rather than to the page being previewed. Drawn as
+ * the shared closed folder (lucide's outline): the tab is the whole difference between it and a
+ * plain rectangle at 12px, so the body carries no detail that would fuse into a block that size.
+ */
+export const FOLDER_ICON =
+  "M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z";
+
 export const NAV_ICONS = {
   agents: AGENT_GROUP_ICON,
   /** Plugin library (the puzzle piece). */

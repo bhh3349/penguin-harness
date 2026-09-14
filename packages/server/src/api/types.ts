@@ -316,6 +316,43 @@ export interface DraftShortcut {
   prompt: string;
 }
 
+/** One folder of the UI workbench's element library (a person's own names, in their own order). */
+export interface ElementLibraryCategory {
+  /** Stable client-generated id (`elc-` + hex): what a rename, a delete and an item address it by. */
+  id: string;
+  name: string;
+  createdAt: number;
+}
+
+/**
+ * One element collected from another site: the DevTools paste a user brought in, plus the
+ * self-contained markup the workbench renders and stores beside it. The paste is kept verbatim
+ * (capped) so a render can be redone when the restore improves; the html/css pair is what the
+ * library actually shows, and `ai` says whether a model had a hand in producing it.
+ */
+export interface ElementLibraryItem {
+  id: string;
+  /** Must name a category in the same library (services/element-library.ts enforces it). */
+  categoryId: string;
+  name: string;
+  createdAt: number;
+  /** Where it was copied from, when the paste says so — a host, never a full URL with a query. */
+  host?: string;
+  /** What the user pasted (trimmed, capped), kept as the source of truth for a later restore. */
+  paste: string;
+  /** The self-contained fragment rendered in the drawer's sandbox. */
+  html: string;
+  css?: string;
+  /** Whether the model produced this render (the deterministic restore leaves it unset). */
+  ai?: boolean;
+}
+
+/** The UI workbench's element library: categories and the items filed under them. */
+export interface ElementLibrary {
+  categories: ElementLibraryCategory[];
+  items: ElementLibraryItem[];
+}
+
 /** User UI preferences (SQLite ui_prefs, free-form JSON; known keys declared here). */
 export interface UiPrefs {
   theme?: "light" | "dark";
@@ -335,10 +372,17 @@ export interface UiPrefs {
   /**
    * The draft screen's user-defined shortcuts, in display order. Replaced whole on every write
    * (the merge is shallow, so the array is one field like any other) and bounded on write by
-   * services/draft-shortcuts.ts — count, title length and prompt length — because this is the one
-   * known key holding user-authored text rather than a flag or an id.
+   * services/draft-shortcuts.ts — count, title length and prompt length — because this is a key
+   * holding user-authored text rather than a flag or an id.
    */
   draftShortcuts?: DraftShortcut[];
+  /**
+   * The UI workbench's element library: elements a user collected from other sites, filed under
+   * their own categories. Replaced whole on every write and bounded on write by
+   * services/element-library.ts — because, like `draftShortcuts`, its value is text the user
+   * wrote (a DevTools paste from someone else's page) rather than a flag or an id.
+   */
+  elementLibrary?: ElementLibrary;
   [key: string]: unknown;
 }
 

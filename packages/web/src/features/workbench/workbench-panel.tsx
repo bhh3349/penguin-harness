@@ -46,6 +46,7 @@ import {
   CLEAR_ICON,
   ELEMENT_PICKER_ICON,
   ENTER_ICON,
+  FOLDER_ICON,
   MULTI_PICK_ICON,
   REFRESH_ICON,
 } from "../../components/ui/icons";
@@ -57,6 +58,7 @@ import type { Tone } from "../../lib/tone";
 import type { ComposerReference } from "../../lib/workspace-tree";
 import { inspectPage, probeCandidatePorts } from "./dev-server-probe";
 import type { PageInspection, PortProbe } from "./dev-server-probe";
+import { ElementLibraryDrawer } from "./element-library-drawer";
 import { createGuest, destroyGuest, desktopShell, guestReady } from "./preview-guest";
 import type {
   GuestConsoleEvent,
@@ -271,6 +273,12 @@ export function WorkbenchPanel({
    * only knows to say so because the page counted them; `null` while nobody has asked.
    */
   const [frameCount, setFrameCount] = useState<number | null>(null);
+  /**
+   * The element library's drawer (L3): it covers the panel it belongs to, and it is the *only* way
+   * into the library — no nav entry, no route, nothing else opens it (BHH, 2026-09-14: the library
+   * is part of the workbench, so it is usable only while the workbench is open).
+   */
+  const [libraryOpen, setLibraryOpen] = useState(false);
 
   /**
    * Ask the page which modules it loaded. Cheap, read-only, and the only thing the React 18 route
@@ -1028,7 +1036,8 @@ export function WorkbenchPanel({
   const boundsHost = selected === null ? "" : describeTarget(selected);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    /* `relative`: the element library's drawer is an inset panel of this panel, not of the window. */
+    <div className="relative flex min-h-0 flex-1 flex-col">
       {/* —— The browser's own row (L2.2b) —— a state dot where a browser keeps its padlock, the
           address, and the two things one does with a page: load it again, or start inspecting it.
           The pick control lives *here* rather than on a row of its own because this panel is a
@@ -1102,6 +1111,21 @@ export function WorkbenchPanel({
             </Button>
           </Tooltip>
         )}
+        {/* The element library (L3) — the one control in this row that says nothing about *this*
+            page: it holds elements copied out of other sites' DevTools, so it stands after the
+            picker and is offered whether or not anything is loaded. It is the library's only
+            entrance: the drawer covers the panel, there is no nav entry and no route. */}
+        <Tooltip label={S.workbench.library.title} placement="bottom" className="shrink-0">
+          <Button
+            size="iconSm"
+            variant={libraryOpen ? "primary" : "ghost"}
+            aria-label={S.workbench.library.title}
+            aria-pressed={libraryOpen}
+            onClick={() => setLibraryOpen((was) => !was)}
+          >
+            <GlyphIcon d={FOLDER_ICON} size={ICON_SIZE.compactButton} />
+          </Button>
+        </Tooltip>
       </div>
 
       {/* Before anything is loaded this row *is* the empty state (FR-08/FR-11): the dev servers this
@@ -1328,6 +1352,8 @@ export function WorkbenchPanel({
                 : S.workbench.pickHint}
         </p>
       )}
+
+      <ElementLibraryDrawer open={libraryOpen} onClose={() => setLibraryOpen(false)} />
     </div>
   );
 
