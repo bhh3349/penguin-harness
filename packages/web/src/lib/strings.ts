@@ -2116,6 +2116,10 @@ Benchmark：
       archived: (n: number) => `已归档（${n}）`,
     },
     skillsBanner: (names: string[]): string => `使用技能：${names.join("、")}`,
+    /** An element picked out of a preview, as the transcript collapses it: one row, the payload behind it. */
+    elementReference: (what: string): string => `元素引用：${what}`,
+    /** The collapsed element row's tooltip — it is the only sign that the payload is still in the message. */
+    elementReferenceTitle: "展开看这条消息带出去的载荷",
     /** Attached-file notice above a user message (file names only; the paths stay in the Trace). */
     attachedFilesBanner: (names: string[]): string => `附加文件：${names.join("、")}`,
     /** Composer "+" extension menu (image upload, file attachment, goal mode) and the goal chip. */

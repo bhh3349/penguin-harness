@@ -1,10 +1,14 @@
 /**
  * Shared "what did the user actually write" extraction for a user_text item, mirroring
- * MessageItem's parse chain (handoff / model-switch → scheduled → skills → attachment
- * lines) without any rendering. Harness-injected inputs never reach this parse: both
+ * MessageItem's parse chain (handoff / model-switch → scheduled → skills → element references →
+ * attachment lines) without any rendering. Harness-injected inputs never reach this parse: both
  * callers skip them on the item's `sender` stamp. Input history and the conversation outline both
  * need this reduction, and each re-implementing the chain would drift from the renderer the
  * moment a new protocol block is added — this module is the single non-rendering copy.
+ *
+ * An element reference belongs here for the same reason a `[use_skills]` block does: the payload is
+ * machine text the panel wrote (see element-reference.ts), and a history entry that reads as a page
+ * of JSON is not the thing the user typed.
  */
 import {
   parseBackgroundTaskDoneMessage,
@@ -13,6 +17,7 @@ import {
   parseScheduledMessage,
 } from "./agent-handoff";
 import { parseSkillsMessage } from "./skill-use";
+import { parseElementReferences } from "./element-reference";
 import { splitAttachments } from "../../lib/attachments";
 
 export interface UserMessageBody {
@@ -44,7 +49,8 @@ export function parseUserMessageBody(raw: string): UserMessageBody | null {
   const scheduled = parseScheduledMessage(raw);
   const afterScheduled = scheduled ? scheduled.rest : raw;
   const skills = parseSkillsMessage(afterScheduled);
-  const { text } = splitAttachments(skills ? skills.rest : afterScheduled);
+  const references = parseElementReferences(skills ? skills.rest : afterScheduled);
+  const { text } = splitAttachments(references.body);
   return {
     body: text.trim(),
     scheduled: scheduled !== null,

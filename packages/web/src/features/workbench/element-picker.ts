@@ -1029,8 +1029,14 @@ export function elementFromGuest(value: unknown): { target: ElementFacts; page: 
   return target === null || page === null ? null : { target, page };
 }
 
-/** The panel's one-line name for an element: `span.badge`, `button#save.primary`, `div`. */
-export function describeTarget(facts: ElementFacts): string {
+/**
+ * The panel's one-line name for an element: `span.badge`, `button#save.primary`, `div`.
+ *
+ * Takes only the three facts it reads, so a caller holding the same three somewhere else can still
+ * get the one wording — the payload keeps them split across `style.classes` and `attributes.id`
+ * (`element-payload.ts`'s `payloadElementLabel`).
+ */
+export function describeTarget(facts: Pick<ElementFacts, "tagName" | "id" | "classList">): string {
   const classes = facts.classList.slice(0, 2).map((name) => `.${name}`);
   return `${facts.tagName}${facts.id === null ? "" : `#${facts.id}`}${classes.join("")}`;
 }

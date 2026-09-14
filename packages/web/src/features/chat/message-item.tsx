@@ -25,6 +25,8 @@ import { McpConnectBanner } from "./mcp-connect-banner";
 import { HandoffBanner, ModelSwitchBanner } from "./handoff-banner";
 import { ScheduledBanner } from "./scheduled-banner";
 import { SkillsBanner } from "./skills-banner";
+import { ElementReferenceChip } from "./element-reference-chip";
+import { parseElementReferences } from "./element-reference";
 import { AttachedFilesBanner } from "./attached-files-banner";
 import { BackgroundDoneBanner } from "./background-done-banner";
 import { HarnessInjectedBanner } from "./harness-banner";
@@ -209,28 +211,38 @@ export function MessageItem({ item, ctx }: { item: ChatItem; ctx: StreamRenderCo
       // "using skill" banner, with the body rendered as usual.
       const afterScheduled = scheduled ? scheduled.rest : item.text;
       const skills = parseSkillsMessage(afterScheduled);
+      // An element picked in the preview: the panel writes its prose and the payload JSON in front of
+      // whatever the user typed, so the bubble would otherwise be a wall of JSON with the user's own
+      // sentence somewhere after it. Nothing is removed from the message — only from what is drawn
+      // (see element-reference.ts); each block becomes one collapsed row that opens onto its own bytes.
+      const references = parseElementReferences(skills ? skills.rest : afterScheduled);
       // Attachment row restoration (last in the chain — these lines trail the body rather than
       // prefixing it): for models that don't support images, input images are written to disk
       // as a path row; this pulls that out at render time and shows the actual image. Mirrors
       // the vision-model path (user_text + user_image as separate messages) in shape: one
       // bubble for the text, one bubble per image, styled the same as user_image. Uploaded
       // files come out of the same pass and collapse into one banner naming them.
-      const { text, images, files } = splitAttachments(skills ? skills.rest : afterScheduled);
+      const { text, images, files } = splitAttachments(references.body);
       return (
         <>
           {scheduled && <ScheduledBanner origin={scheduled.origin} />}
           {skills && <SkillsBanner names={skills.skills} />}
-          {text && (
-            <div className="anim-msg group my-4 flex flex-col items-end">
-              <div className="max-w-[88%] rounded-lg bg-gray-100 px-4 py-2.5 md:max-w-[75%] dark:bg-gray-800">
-                {/* wrap-anywhere: long unbroken strings like attachment paths/long URLs wrap within the bubble on narrow (mobile) screens instead of overflowing; unlike break-words it also shrinks min-content, so a pathological token can't stretch the flex bubble itself. Normal words still only break when a token can't fit on a line. */}
-                <p className="wrap-anywhere whitespace-pre-wrap text-base leading-relaxed text-gray-900 dark:text-gray-100">
-                  {text}
-                </p>
-              </div>
+          {(references.references.length > 0 || text) && (
+            <div className="anim-msg group my-4 flex flex-col items-end gap-1.5">
+              {references.references.map((reference, i) => (
+                <ElementReferenceChip key={i} reference={reference} />
+              ))}
+              {text && (
+                <div className="max-w-[88%] rounded-lg bg-gray-100 px-4 py-2.5 md:max-w-[75%] dark:bg-gray-800">
+                  {/* wrap-anywhere: long unbroken strings like attachment paths/long URLs wrap within the bubble on narrow (mobile) screens instead of overflowing; unlike break-words it also shrinks min-content, so a pathological token can't stretch the flex bubble itself. Normal words still only break when a token can't fit on a line. */}
+                  <p className="wrap-anywhere whitespace-pre-wrap text-base leading-relaxed text-gray-900 dark:text-gray-100">
+                    {text}
+                  </p>
+                </div>
+              )}
               <MessageMeta
                 {...(item.atMs !== undefined ? { atMs: item.atMs } : {})}
-                text={text}
+                {...(text === "" ? {} : { text })}
                 align="right"
               />
             </div>

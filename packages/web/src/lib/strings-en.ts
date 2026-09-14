@@ -2144,6 +2144,10 @@ Scenarios:
     },
     skillsBanner: (names: string[]): string =>
       `Using skill${names.length === 1 ? "" : "s"}: ${names.join(", ")}`,
+    /** An element picked out of a preview, as the transcript collapses it: one row, the payload behind it. */
+    elementReference: (what: string): string => `Element reference: ${what}`,
+    /** The collapsed element row's tooltip — it is the only sign that the payload is still in the message. */
+    elementReferenceTitle: "Expand to see the payload this message carried",
     attachedFilesBanner: (names: string[]): string =>
       `Attached file${names.length === 1 ? "" : "s"}: ${names.join(", ")}`,
     /** Composer "+" extension menu (image upload, file attachment, goal mode) and the goal chip. */

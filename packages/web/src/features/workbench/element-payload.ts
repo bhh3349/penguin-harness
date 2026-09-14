@@ -354,10 +354,29 @@ export function batchRefId(refIds: readonly string[]): string {
  * point at it — the accessible name when the page declares one, its text otherwise. An element with
  * neither is still named by its description rather than by an empty pair of quotes.
  */
-export function elementLabel(target: ElementFacts): string {
+export function elementLabel(
+  target: Pick<ElementFacts, "tagName" | "id" | "classList" | "name" | "text">,
+): string {
   const described = describeTarget(target);
   const quoted = target.name ?? target.text;
   return quoted === null || quoted === "" ? described : `${described} "${quoted}"`;
+}
+
+/**
+ * The same name again, for a reader that holds only the **payload**: a payload keeps its classes in
+ * `style.classes` and its id in `attributes.id`, where the picker's facts keep them at the top level.
+ * The transcript draws an element reference back out of the message's own bytes
+ * (`chat/element-reference.ts`), so it has the payload and not the pick — and the name it puts on the
+ * row has to be the one the panel's chip wore, which is why the wording itself stays `elementLabel`'s.
+ */
+export function payloadElementLabel(target: PayloadTarget, classes: readonly string[]): string {
+  return elementLabel({
+    tagName: target.tagName,
+    id: target.attributes["id"] ?? null,
+    classList: [...classes],
+    name: target.name,
+    text: target.text,
+  });
 }
 
 /**
