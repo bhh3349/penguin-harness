@@ -8,6 +8,16 @@
  * than at app start: someone who never opens the drawer never pays for the library (the blob rides in
  * `GET /api/me/prefs`).
  *
+ * **A pane of the panel, not an overlay on it** (D38): the page has to stay on screen while the
+ * library is open — BHH, 2026-09-14: "元素库要和网页在同一个画面… 后续可以做到直接从元素库拖到网页上
+ * 就可以生成新的网页" — because putting a collected element back onto that page is where this is
+ * going. So the first version's `absolute inset-0` (the drawer covered the panel, and with it the
+ * guest) is gone: this rises from the panel's bottom edge and takes **two of the panel's five height
+ * shares** while the guest keeps three (`workbench-panel.tsx` holds the other side of that ratio).
+ * One consequence worth keeping: the folder button in the address row stays clickable, so the library
+ * can be closed by pressing it again — an inset drawer covered that button, which left × and Esc as
+ * the only ways out.
+ *
  * The flow it implements, in one line: paste what DevTools copied → see it restored immediately
  * (`element-restore.ts`, no model in the loop) → name it → file it under a category → it is a row in
  * this list. The AI-restored variant of step two is L3.4 and is not here yet.
@@ -191,7 +201,7 @@ export function ElementLibraryDrawer({ open, onClose }: ElementLibraryDrawerProp
   return (
     <div
       data-element-library="1"
-      className="anim-drawer-right absolute inset-0 z-20 flex flex-col border-l border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950"
+      className="anim-drawer-up flex min-h-0 flex-[2] flex-col border-t border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950"
     >
       <div className="flex shrink-0 items-center gap-2 px-3 py-2">
         <GlyphIcon d={FOLDER_ICON} size={ICON_SIZE.compactButton} />

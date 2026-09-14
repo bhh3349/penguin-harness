@@ -1036,7 +1036,9 @@ export function WorkbenchPanel({
   const boundsHost = selected === null ? "" : describeTarget(selected);
 
   return (
-    /* `relative`: the element library's drawer is an inset panel of this panel, not of the window. */
+    /* `relative`: the panel is its own positioning context. The element library used to lean on it
+       (`absolute inset-0`); since D38 the library is a flex sibling instead, so the page keeps its
+       place on screen while the library is open. */
     <div className="relative flex min-h-0 flex-1 flex-col">
       {/* —— The browser's own row (L2.2b) —— a state dot where a browser keeps its padlock, the
           address, and the two things one does with a page: load it again, or start inspecting it.
@@ -1114,7 +1116,8 @@ export function WorkbenchPanel({
         {/* The element library (L3) — the one control in this row that says nothing about *this*
             page: it holds elements copied out of other sites' DevTools, so it stands after the
             picker and is offered whether or not anything is loaded. It is the library's only
-            entrance: the drawer covers the panel, there is no nav entry and no route. */}
+            entrance: there is no nav entry and no route, and since D38 the pane it opens sits inside
+            this panel without covering it, so this button stays reachable as the way back out. */}
         <Tooltip label={S.workbench.library.title} placement="bottom" className="shrink-0">
           <Button
             size="iconSm"
@@ -1337,7 +1340,14 @@ export function WorkbenchPanel({
         </details>
       )}
 
-      <div ref={containerRef} className="min-h-0 flex-1 bg-white dark:bg-gray-950" />
+      {/* The guest and the element library share this panel: three of five height shares here, two
+          there (`element-library-drawer.tsx`), with the one-line hint between them. With the library
+          closed the guest takes the whole panel, exactly as it did before D38 — the library is a pane
+          rather than an overlay, so the page it is meant to feed stays on screen beside it. */}
+      <div
+        ref={containerRef}
+        className={`min-h-0 bg-white dark:bg-gray-950 ${libraryOpen ? "flex-[3]" : "flex-1"}`}
+      />
 
       {guestState.kind === "ready" && (
         <p className={strip("muted")}>

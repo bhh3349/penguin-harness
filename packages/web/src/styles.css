@@ -214,6 +214,15 @@
   }
 }
 
+@keyframes drawer-in-up {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: none;
+  }
+}
+
 /* Login card entrance (used only on the login page; in-app pages skip entrance animations to avoid a
    transform ancestor hijacking fixed-positioned overlays). */
 .anim-rise {
@@ -362,6 +371,10 @@
 }
 .anim-drawer-right {
   animation: drawer-in-right 240ms cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+/* The workbench's element library rises from the bottom edge of the panel (D38). */
+.anim-drawer-up {
+  animation: drawer-in-up 240ms cubic-bezier(0.2, 0.7, 0.3, 1) both;
 }
 
 /* Truncated-title scroll reveal (#309, sidebar conversation rows; truncated.tsx attaches the
